@@ -35,7 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cpuMenu.addItem(cpuQuitItem)
 
         if let button = cpuItem.button {
-            button.title = "CPU: 0%"
+            button.title = "CPU0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showCpuMenu(_:))
@@ -45,7 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         lastCpuInfo = getCpuInfo()
         updateSpeed()
 
-        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] (_) in
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] (_) in
             self?.updateSpeed()
         }
     }
@@ -148,7 +148,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let cpuUsage = getCpuUsage()
         if let button = cpuItem.button {
-            button.title = "CPU: " + String(cpuUsage) + "%"
+            button.title = "CPU" + String(cpuUsage) + "%"
         }
     }
 
