@@ -22,7 +22,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = networkItem.button {
             button.title = "Net: 0B/0B"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-            button.menu = networkMenu
+            button.target = self
+            button.action = #selector(showNetworkMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         // CPU 状态项
@@ -35,7 +37,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = cpuItem.button {
             button.title = "CPU: 0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-            button.menu = cpuMenu
+            button.target = self
+            button.action = #selector(showCpuMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         lastCpuInfo = getCpuInfo()
@@ -44,6 +48,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] (_) in
             self?.updateSpeed()
         }
+    }
+
+    @objc func showNetworkMenu(_ sender: AnyObject?) {
+        networkItem.menu = networkMenu
+        networkItem.button?.performClick(nil)
+    }
+
+    @objc func showCpuMenu(_ sender: AnyObject?) {
+        cpuItem.menu = cpuMenu
+        cpuItem.button?.performClick(nil)
     }
 
     @objc func quitApp() {
