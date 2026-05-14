@@ -12,6 +12,8 @@
     <string>1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
     <key>LSUIElement</key>
     <true/>
 </dict>
