@@ -6,12 +6,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var networkItem: NSStatusItem!
     var cpuItem: NSStatusItem!
     var memoryItem: NSStatusItem!
+    var hdItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
     var lastCpuInfo: host_cpu_load_info?
     var networkMenu: NSMenu!
     var cpuMenu: NSMenu!
     var memoryMenu: NSMenu!
+    var hdMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 网络状态项
@@ -65,6 +67,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showMemoryMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        // 磁盘状态项
+        hdItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        hdMenu = NSMenu()
+        let hdCloseItem = NSMenuItem(title: "关闭", action: #selector(closeHdItem), keyEquivalent: "")
+        hdCloseItem.target = self
+        hdMenu.addItem(hdCloseItem)
+        let hdQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        hdQuitItem.target = self
+        hdMenu.addItem(hdQuitItem)
+
+        if let button = hdItem.button {
+            button.title = "HD0%"
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.target = self
+            button.action = #selector(showHdMenu(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
@@ -243,9 +263,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         memoryItem = nil
         checkAllClosed()
     }
-    
+
+    @objc func closeHdItem() {
+        NSStatusBar.system.removeStatusItem(hdItem)
+        hdItem = nil
+        checkAllClosed()
+    }
+
+    @objc func showHdMenu(_ sender: AnyObject?) {
+        guard let hdItem = hdItem else { return }
+        hdMenu.removeAllItems()
+
+        let (used, total, _) = getDiskUsageDetail()
+        let freeSpace = total - used
+        let usedStr = formatBytes(used)
+        let totalStr = formatBytes(total)
+        let freeStr = formatBytes(freeSpace)
+
+        let hdItemMenu = NSMenuItem(title: "已用: \(usedStr) / \(totalStr)\n剩余: \(freeStr)", action: nil, keyEquivalent: "")
+        hdItemMenu.isEnabled = false
+        hdMenu.addItem(hdItemMenu)
+
+        hdMenu.addItem(NSMenuItem.separator())
+
+        let hdCloseItem = NSMenuItem(title: "关闭", action: #selector(closeHdItem), keyEquivalent: "")
+        hdCloseItem.target = self
+        hdMenu.addItem(hdCloseItem)
+
+        let hdQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        hdQuitItem.target = self
+        hdMenu.addItem(hdQuitItem)
+
+        hdItem.menu = hdMenu
+        hdItem.button?.performClick(nil)
+    }
+
+    func getDiskUsage() -> Double {
+        let (used, total, _) = getDiskUsageDetail()
+        guard total > 0 else { return 0 }
+        return Double(used) / Double(total) * 100
+    }
+
+    func getDiskUsageDetail() -> (used: UInt64, total: UInt64, percent: Double) {
+        let fileManager = FileManager.default
+        do {
+            let attributes = try fileManager.attributesOfFileSystem(forPath: NSHomeDirectory())
+            if let totalSize = attributes[.systemSize] as? UInt64,
+               let freeSize = attributes[.systemFreeSize] as? UInt64 {
+                let usedSize = totalSize - freeSize
+                let percent = Double(usedSize) / Double(totalSize) * 100
+                return (usedSize, totalSize, percent)
+            }
+        } catch {
+            return (0, 0, 0)
+        }
+        return (0, 0, 0)
+    }
+
+    func getFreeDiskSpace() -> String {
+        let fileManager = FileManager.default
+        do {
+            let attributes = try fileManager.attributesOfFileSystem(forPath: NSHomeDirectory())
+            if let freeSize = attributes[.systemFreeSize] as? UInt64 {
+                return formatBytes(freeSize)
+            }
+        } catch {
+            return "0GB"
+        }
+        return "0GB"
+    }
+
     func checkAllClosed() {
-        if networkItem == nil && cpuItem == nil && memoryItem == nil {
+        if networkItem == nil && cpuItem == nil && memoryItem == nil && hdItem == nil {
             NSApplication.shared.terminate(nil)
         }
     }
@@ -271,6 +360,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let (_, _, memPercent) = getMemoryUsage()
         if let button = memoryItem?.button {
             button.title = "MEM" + String(Int(memPercent)) + "%"
+        }
+
+        let hdPercent = getDiskUsage()
+        let freeSpace = getFreeDiskSpace()
+        if let button = hdItem?.button {
+            button.title = "HD" + freeSpace
         }
     }
 
