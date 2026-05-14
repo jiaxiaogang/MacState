@@ -17,6 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 网络状态项
         networkItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         networkMenu = NSMenu()
+        let netCloseItem = NSMenuItem(title: "关闭", action: #selector(closeNetworkItem), keyEquivalent: "")
+        netCloseItem.target = self
+        networkMenu.addItem(netCloseItem)
         let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         netQuitItem.target = self
         networkMenu.addItem(netQuitItem)
@@ -32,6 +35,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // CPU 状态项
         cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         cpuMenu = NSMenu()
+        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
+        cpuCloseItem.target = self
+        cpuMenu.addItem(cpuCloseItem)
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
@@ -47,6 +53,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 内存状态项
         memoryItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         memoryMenu = NSMenu()
+        let memCloseItem = NSMenuItem(title: "关闭", action: #selector(closeMemoryItem), keyEquivalent: "")
+        memCloseItem.target = self
+        memoryMenu.addItem(memCloseItem)
         let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         memQuitItem.target = self
         memoryMenu.addItem(memQuitItem)
@@ -68,23 +77,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showNetworkMenu(_ sender: AnyObject?) {
+        guard let networkItem = networkItem else { return }
         networkItem.menu = networkMenu
         networkItem.button?.performClick(nil)
     }
 
     @objc func showCpuMenu(_ sender: AnyObject?) {
+        guard let cpuItem = cpuItem else { return }
         cpuMenu.removeAllItems()
-
+        
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         cpuMenu.addItem(loadingItem)
-
+        
         cpuMenu.addItem(NSMenuItem.separator())
-
+        
+        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
+        cpuCloseItem.target = self
+        cpuMenu.addItem(cpuCloseItem)
+        
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
-
+        
         cpuItem.menu = cpuMenu
         cpuItem.button?.performClick(nil)
 
@@ -147,6 +162,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showMemoryMenu(_ sender: AnyObject?) {
+        guard let memoryItem = memoryItem else { return }
         memoryMenu.removeAllItems()
 
         let (used, total, _) = getMemoryUsage()
@@ -158,6 +174,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         memoryMenu.addItem(memItem)
 
         memoryMenu.addItem(NSMenuItem.separator())
+        
+        let memCloseItem = NSMenuItem(title: "关闭", action: #selector(closeMemoryItem), keyEquivalent: "")
+        memCloseItem.target = self
+        memoryMenu.addItem(memCloseItem)
 
         let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         memQuitItem.target = self
@@ -205,7 +225,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
     }
-
+    
+    @objc func closeNetworkItem() {
+        NSStatusBar.system.removeStatusItem(networkItem)
+        networkItem = nil
+        checkAllClosed()
+    }
+    
+    @objc func closeCpuItem() {
+        NSStatusBar.system.removeStatusItem(cpuItem)
+        cpuItem = nil
+        checkAllClosed()
+    }
+    
+    @objc func closeMemoryItem() {
+        NSStatusBar.system.removeStatusItem(memoryItem)
+        memoryItem = nil
+        checkAllClosed()
+    }
+    
+    func checkAllClosed() {
+        if networkItem == nil && cpuItem == nil && memoryItem == nil {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+    
      func updateSpeed() {
         let (currentUploaded, currentDownloaded) = getNetworkBytes()
         let uploaded = currentUploaded > lastUploaded ? currentUploaded - lastUploaded : 0
@@ -215,17 +259,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let uploadStr = formatSpeed(uploaded)
         let downloadStr = formatSpeed(downloaded)
 
-        if let button = networkItem.button {
+        if let button = networkItem?.button {
             button.title = "↑" + uploadStr + "↓" + downloadStr
         }
 
         let cpuUsage = getCpuUsage()
-        if let button = cpuItem.button {
+        if let button = cpuItem?.button {
             button.title = "CPU" + String(cpuUsage) + "%"
         }
 
         let (_, _, memPercent) = getMemoryUsage()
-        if let button = memoryItem.button {
+        if let button = memoryItem?.button {
             button.title = "MEM" + String(Int(memPercent)) + "%"
         }
     }
