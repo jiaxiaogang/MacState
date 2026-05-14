@@ -2,33 +2,27 @@ import Foundation
 import AppKit
 import Darwin
 
-class NetworkSpeedApp: NSObject, NSMenuDelegate {
-    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
     var menu: NSMenu!
 
-    override init() {
-        super.init()
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+
         menu = NSMenu()
-        menu.delegate = self
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-    }
 
-    func start() {
         if let button = statusItem.button {
+            button.menu = menu
             button.title = "↑ 0B/s ↓ 0B/s"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
 
-            // 直接设置菜单
-            statusItem.menu = menu
-
-            // 添加手势识别
-            let rightClick = NSClickGestureRecognizer(target: self, action: #selector(handleRightClick(_:)))
-            rightClick.buttonMask = 0x2  // 右键
-            button.addGestureRecognizer(rightClick)
+            let clickRecognizer = NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:)))
+            button.addGestureRecognizer(clickRecognizer)
         }
 
         updateSpeed()
@@ -36,13 +30,17 @@ class NetworkSpeedApp: NSObject, NSMenuDelegate {
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.updateSpeed()
         }
-
-        RunLoop.main.run()
     }
 
-    @objc func handleRightClick(_ gesture: NSClickGestureRecognizer) {
-        print("检测到右键点击")
-        statusItem.button?.performClick(nil)
+    @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
+        if let button = statusItem.button {
+            statusItem.menu = menu
+            button.performClick(nil)
+        }
+    }
+
+    @objc func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 
     func updateSpeed() {
@@ -62,11 +60,6 @@ class NetworkSpeedApp: NSObject, NSMenuDelegate {
         if let button = statusItem.button {
             button.title = displayText
         }
-    }
-
-    @objc func quitApp() {
-        print("退出程序")
-        NSApplication.shared.terminate(nil)
     }
 
     func getNetworkBytes() -> (uploaded: UInt64, downloaded: UInt64) {
@@ -118,7 +111,7 @@ class NetworkSpeedApp: NSObject, NSMenuDelegate {
 }
 
 let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
 app.setActivationPolicy(.accessory)
-
-let networkApp = NetworkSpeedApp()
-networkApp.start()
+app.run()
