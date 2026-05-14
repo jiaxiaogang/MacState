@@ -3,27 +3,39 @@ import AppKit
 import Darwin
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var statusItem: NSStatusItem!
+    var networkItem: NSStatusItem!
+    var cpuItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
     var lastCpuInfo: host_cpu_load_info?
-    var menu: NSMenu!
+    var networkMenu: NSMenu!
+    var cpuMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 网络状态项
+        networkItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        networkMenu = NSMenu()
+        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        netQuitItem.target = self
+        networkMenu.addItem(netQuitItem)
 
-        menu = NSMenu()
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
-        if let button = statusItem.button {
-            button.menu = menu
-            button.title = "Net: 0B/s CPU: 0%"
+        if let button = networkItem.button {
+            button.title = "Net: 0B/0B"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.menu = networkMenu
+        }
 
-            let clickRecognizer = NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:)))
-            button.addGestureRecognizer(clickRecognizer)
+        // CPU 状态项
+        cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        cpuMenu = NSMenu()
+        let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        cpuQuitItem.target = self
+        cpuMenu.addItem(cpuQuitItem)
+
+        if let button = cpuItem.button {
+            button.title = "CPU: 0%"
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.menu = cpuMenu
         }
 
         lastCpuInfo = getCpuInfo()
@@ -34,34 +46,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
-        if let button = statusItem.button {
-            statusItem.menu = menu
-            button.performClick(nil)
-        }
-    }
-
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
     }
 
-    func updateSpeed() {
+     func updateSpeed() {
         let (currentUploaded, currentDownloaded) = getNetworkBytes()
-
         let uploaded = currentUploaded > lastUploaded ? currentUploaded - lastUploaded : 0
         let downloaded = currentDownloaded > lastDownloaded ? currentDownloaded - lastDownloaded : 0
-
         lastUploaded = currentUploaded
         lastDownloaded = currentDownloaded
-
         let uploadStr = formatSpeed(uploaded)
         let downloadStr = formatSpeed(downloaded)
+
+        if let button = networkItem.button {
+            button.title = "Net: " + uploadStr + "/" + downloadStr
+        }
+
         let cpuUsage = getCpuUsage()
-
-        let displayText = "Net: \(uploadStr)/\(downloadStr) CPU: \(cpuUsage)%"
-
-        if let button = statusItem.button {
-            button.title = displayText
+        if let button = cpuItem.button {
+            button.title = "CPU: " + String(cpuUsage) + "%"
         }
     }
 
