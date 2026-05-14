@@ -5,11 +5,13 @@ import Darwin
 class AppDelegate: NSObject, NSApplicationDelegate {
     var networkItem: NSStatusItem!
     var cpuItem: NSStatusItem!
+    var memoryItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
     var lastCpuInfo: host_cpu_load_info?
     var networkMenu: NSMenu!
     var cpuMenu: NSMenu!
+    var memoryMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 网络状态项
@@ -39,6 +41,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showCpuMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        // 内存状态项
+        memoryItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        memoryMenu = NSMenu()
+        let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        memQuitItem.target = self
+        memoryMenu.addItem(memQuitItem)
+
+        if let button = memoryItem.button {
+            button.title = "MEM0%"
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.target = self
+            button.action = #selector(showMemoryMenu(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
@@ -129,6 +146,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return processes
     }
 
+    @objc func showMemoryMenu(_ sender: AnyObject?) {
+        memoryMenu.removeAllItems()
+
+        let (used, total, _) = getMemoryUsage()
+        let usedStr = formatBytes(used)
+        let totalStr = formatBytes(total)
+
+        let memItem = NSMenuItem(title: "已用: \(usedStr) / \(totalStr)", action: nil, keyEquivalent: "")
+        memItem.isEnabled = false
+        memoryMenu.addItem(memItem)
+
+        memoryMenu.addItem(NSMenuItem.separator())
+
+        let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        memQuitItem.target = self
+        memoryMenu.addItem(memQuitItem)
+
+        memoryItem.menu = memoryMenu
+        memoryItem.button?.performClick(nil)
+    }
+
+    func getMemoryUsage() -> (used: UInt64, total: UInt64, percent: Double) {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
+
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else { return (0, 0, 0) }
+
+        let pageSize = UInt64(vm_kernel_page_size)
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        let activeMemory = UInt64(stats.active_count) * pageSize
+        let wiredMemory = UInt64(stats.wire_count) * pageSize
+        let compressedMemory = UInt64(stats.compressor_page_count) * pageSize
+
+        let usedMemory = activeMemory + wiredMemory + compressedMemory
+        let percent = Double(usedMemory) / Double(totalMemory) * 100
+
+        return (usedMemory, totalMemory, percent)
+    }
+
+    func formatBytes(_ bytes: UInt64) -> String {
+        let gb = Double(bytes) / 1024 / 1024 / 1024
+        let mb = Double(bytes) / 1024 / 1024
+
+        if gb >= 1 {
+            return String(format: "%.1fGB", gb)
+        } else {
+            return String(format: "%.0fMB", mb)
+        }
+    }
+
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
     }
@@ -149,6 +222,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let cpuUsage = getCpuUsage()
         if let button = cpuItem.button {
             button.title = "CPU" + String(cpuUsage) + "%"
+        }
+
+        let (_, _, memPercent) = getMemoryUsage()
+        if let button = memoryItem.button {
+            button.title = "MEM" + String(Int(memPercent)) + "%"
         }
     }
 
