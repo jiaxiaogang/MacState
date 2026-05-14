@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         networkMenu.addItem(netQuitItem)
 
         if let button = networkItem.button {
-            button.title = "Net: 0B/0B"
+            button.title = "↑0B↓0B"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showNetworkMenu(_:))
@@ -56,8 +56,77 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showCpuMenu(_ sender: AnyObject?) {
+        cpuMenu.removeAllItems()
+
+        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        cpuMenu.addItem(loadingItem)
+
+        cpuMenu.addItem(NSMenuItem.separator())
+
+        let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        cpuQuitItem.target = self
+        cpuMenu.addItem(cpuQuitItem)
+
         cpuItem.menu = cpuMenu
         cpuItem.button?.performClick(nil)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let topProcesses = self?.getTopCpuProcesses() ?? []
+
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.cpuMenu.removeAllItems()
+
+                for (name, cpu) in topProcesses {
+                    let item = NSMenuItem(title: "\(String(format: "%.1f", cpu))% \(name)", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    self.cpuMenu.addItem(item)
+                }
+
+                self.cpuMenu.addItem(NSMenuItem.separator())
+
+                let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
+                cpuQuitItem.target = self
+                self.cpuMenu.addItem(cpuQuitItem)
+            }
+        }
+    }
+
+    func getTopCpuProcesses() -> [(String, Double)] {
+        let task = Process()
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-c", "top -l 1 -n 5 -o cpu | head -20"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var processes: [(String, Double)] = []
+        let lines = output.components(separatedBy: "\n")
+
+        for line in lines {
+            let components = line.split(whereSeparator: { $0.isWhitespace })
+            guard components.count >= 2 else { continue }
+
+            if let cpu = Double(components[0].description), cpu > 0 && cpu < 100 {
+                let name = components.count > 5 ? components[5].description : components.last?.description ?? "Unknown"
+                processes.append((name, cpu))
+                if processes.count >= 5 { break }
+            }
+        }
+
+        return processes
     }
 
     @objc func quitApp() {
@@ -74,7 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let downloadStr = formatSpeed(downloaded)
 
         if let button = networkItem.button {
-            button.title = "Net: " + uploadStr + "/" + downloadStr
+            button.title = "↑" + uploadStr + "↓" + downloadStr
         }
 
         let cpuUsage = getCpuUsage()
