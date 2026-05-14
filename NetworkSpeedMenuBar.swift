@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
+    var lastCpuInfo: host_cpu_load_info?
     var menu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,16 +19,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let button = statusItem.button {
             button.menu = menu
-            button.title = "↑ 0B/s ↓ 0B/s"
+            button.title = "Net: 0B/s CPU: 0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
 
             let clickRecognizer = NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:)))
             button.addGestureRecognizer(clickRecognizer)
         }
 
+        lastCpuInfo = getCpuInfo()
         updateSpeed()
 
-        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] (_) in
             self?.updateSpeed()
         }
     }
@@ -54,12 +56,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let uploadStr = formatSpeed(uploaded)
         let downloadStr = formatSpeed(downloaded)
+        let cpuUsage = getCpuUsage()
 
-        let displayText = "↑\(uploadStr) ↓\(downloadStr)"
+        let displayText = "Net: \(uploadStr)/\(downloadStr) CPU: \(cpuUsage)%"
 
         if let button = statusItem.button {
             button.title = displayText
         }
+    }
+
+    func getCpuInfo() -> host_cpu_load_info? {
+        var size = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.stride / MemoryLayout<integer_t>.stride)
+        var cpuInfo = host_cpu_load_info()
+        let hostInfo = withUnsafeMutablePointer(to: &cpuInfo) { $0 }
+        let result = hostInfo.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+            host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &size)
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return cpuInfo
+    }
+
+    func getCpuUsage() -> Int {
+        guard let currentCpu = getCpuInfo(), let previousCpu = lastCpuInfo else {
+            lastCpuInfo = getCpuInfo()
+            return 0
+        }
+
+        let userDiff = Int(currentCpu.cpu_ticks.0) - Int(previousCpu.cpu_ticks.0)
+        let systemDiff = Int(currentCpu.cpu_ticks.1) - Int(previousCpu.cpu_ticks.1)
+        let idleDiff = Int(currentCpu.cpu_ticks.2) - Int(previousCpu.cpu_ticks.2)
+        let niceDiff = Int(currentCpu.cpu_ticks.3) - Int(previousCpu.cpu_ticks.3)
+
+        let totalDiff = userDiff + systemDiff + idleDiff + niceDiff
+        guard totalDiff > 0 else {
+            lastCpuInfo = currentCpu
+            return 0
+        }
+
+        let used = userDiff + systemDiff + niceDiff
+        let usage = Double(used) / Double(totalDiff) * 100
+
+        lastCpuInfo = currentCpu
+        return Int(usage)
     }
 
     func getNetworkBytes() -> (uploaded: UInt64, downloaded: UInt64) {
@@ -99,13 +137,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let gb = mb / 1024
 
         if gb >= 1 {
-            return String(format: "%.1fGB/s", gb)
+            return String(format: "%.1fGB", gb)
         } else if mb >= 1 {
-            return String(format: "%.1fMB/s", mb)
+            return String(format: "%.1fMB", mb)
         } else if kb >= 1 {
-            return String(format: "%.1fKB/s", kb)
+            return String(format: "%.0fKB", kb)
         } else {
-            return "0B/s"
+            return "0B"
         }
     }
 }
