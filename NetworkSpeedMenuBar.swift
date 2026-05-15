@@ -17,6 +17,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var cpuMenuActive = false
     var memoryMenuActive = false
     
+    var networkMenuActive = false
+
     func log(_ msg: String) {
         let path = NSHomeDirectory() + "/Desktop/repos/MacState/log.txt"
         let date = Date()
@@ -129,24 +131,123 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showNetworkMenu(_ sender: AnyObject?) {
+        self.log("showNetworkMenu 被调用")
         guard let networkItem = networkItem else { return }
+        networkMenuActive = true
+        self.log("networkMenuActive 设为 true")
+
+        self.log("开始加载 Network 菜单")
+        networkMenu.removeAllItems()
+        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        networkMenu.addItem(loadingItem)
+
+        networkMenu.addItem(NSMenuItem.separator())
+        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        netQuitItem.target = self
+        networkMenu.addItem(netQuitItem)
+
         networkItem.menu = networkMenu
-        networkItem.button?.performClick(nil)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.log("开始异步获取 Network 数据")
+            let topProcesses = self?.getTopNetworkProcesses() ?? []
+            self?.log("获取到 \(topProcesses.count) 个进程")
+
+            DispatchQueue.main.async { [weak self] in
+                self?.log("主线程更新 Network 菜单, networkMenuActive=\(self?.networkMenuActive ?? false)")
+                guard let self = self, self.networkMenuActive else { self?.log("networkMenuActive 为 false 或 self 为 nil"); return }
+
+                let (uploaded, downloaded) = self.getNetworkBytes()
+                let uploadStr = self.formatSpeed(uploaded)
+                let downloadStr = self.formatSpeed(downloaded)
+
+                self.log("网速: ↑\(uploadStr) ↓\(downloadStr)")
+                self.networkMenu.removeAllItems()
+
+                let netItem = NSMenuItem(title: "↑\(uploadStr) ↓\(downloadStr)", action: nil, keyEquivalent: "")
+                netItem.isEnabled = false
+                self.networkMenu.addItem(netItem)
+
+                self.networkMenu.addItem(NSMenuItem.separator())
+
+                for (name, bytesIn, bytesOut) in topProcesses {
+                    let item = NSMenuItem(title: "↓\(bytesIn) ↑\(bytesOut) \(name)", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    self.networkMenu.addItem(item)
+                }
+
+                self.networkMenu.addItem(NSMenuItem.separator())
+
+                let netCloseItem = NSMenuItem(title: "关闭", action: #selector(self.closeNetworkItem), keyEquivalent: "")
+                netCloseItem.target = self
+                self.networkMenu.addItem(netCloseItem)
+
+                let netQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
+                netQuitItem.target = self
+                self.networkMenu.addItem(netQuitItem)
+                self.log("Network 菜单更新完成")
+            }
+        }
+    }
+
+    func getTopNetworkProcesses() -> [(String, String, String)] {
+        let task = Process()
+        task.launchPath = "/usr/bin/nettop"
+        task.arguments = ["-P", "-L", "1", "-J", "bytes_in,bytes_out"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var processes: [(String, String, String)] = []
+        let lines = output.components(separatedBy: "\n")
+
+        for line in lines.dropFirst() {
+            let components = line.components(separatedBy: ",")
+            guard components.count >= 3 else { continue }
+
+            let name = components[0]
+            guard let inBytes = UInt64(components[1].trimmingCharacters(in: .whitespaces)),
+                  let outBytes = UInt64(components[2].trimmingCharacters(in: .whitespaces)) else { continue }
+
+            if inBytes > 0 || outBytes > 0 {
+                let inStr = formatBytes(inBytes)
+                let outStr = formatBytes(outBytes)
+                processes.append((name, inStr, outStr))
+                if processes.count >= 5 { break }
+            }
+        }
+
+        return processes
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        self.log("menuDidClose: \(menu === cpuMenu ? "cpuMenu" : (menu === memoryMenu ? "memoryMenu" : "other"))")
+        self.log("menuDidClose: \(menu === cpuMenu ? "cpuMenu" : (menu === memoryMenu ? "memoryMenu" : (menu === networkMenu ? "networkMenu" : "other")))")
         if menu === cpuMenu {
             cpuMenuActive = false
             self.log("cpuMenuActive = false")
         } else if menu === memoryMenu {
             memoryMenuActive = false
             self.log("memoryMenuActive = false")
+        } else if menu === networkMenu {
+            networkMenuActive = false
+            self.log("networkMenuActive = false")
         }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        self.log("menuWillOpen: \(menu === cpuMenu ? "cpuMenu" : (menu === memoryMenu ? "memoryMenu" : "other"))")
+        self.log("menuWillOpen: \(menu === cpuMenu ? "cpuMenu" : (menu === memoryMenu ? "memoryMenu" : (menu === networkMenu ? "networkMenu" : "other")))")
         if menu === cpuMenu {
             cpuMenuActive = true
             self.log("cpuMenuActive = true")
@@ -155,6 +256,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             memoryMenuActive = true
             self.log("memoryMenuActive = true")
             loadMemoryData()
+        } else if menu === networkMenu {
+            networkMenuActive = true
+            self.log("networkMenuActive = true")
         }
     }
     
