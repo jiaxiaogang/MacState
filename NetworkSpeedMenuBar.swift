@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import Darwin
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var networkItem: NSStatusItem!
     var cpuItem: NSStatusItem!
     var memoryItem: NSStatusItem!
@@ -14,6 +14,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var cpuMenu: NSMenu!
     var memoryMenu: NSMenu!
     var hdMenu: NSMenu!
+    var cpuMenuActive = false
+    var memoryMenuActive = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 磁盘状态项
@@ -37,6 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 内存状态项
         memoryItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         memoryMenu = NSMenu()
+        memoryMenu.delegate = self
         let memCloseItem = NSMenuItem(title: "关闭", action: #selector(closeMemoryItem), keyEquivalent: "")
         memCloseItem.target = self
         memoryMenu.addItem(memCloseItem)
@@ -55,6 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // CPU 状态项
         cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         cpuMenu = NSMenu()
+        cpuMenu.delegate = self
         let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
         cpuCloseItem.target = self
         cpuMenu.addItem(cpuCloseItem)
@@ -102,32 +106,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         networkItem.button?.performClick(nil)
     }
 
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === cpuMenu {
+            cpuMenuActive = false
+        } else if menu === memoryMenu {
+            memoryMenuActive = false
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu === cpuMenu {
+            cpuMenuActive = true
+        } else if menu === memoryMenu {
+            memoryMenuActive = true
+        }
+    }
+
     @objc func showCpuMenu(_ sender: AnyObject?) {
         guard let cpuItem = cpuItem else { return }
-        cpuMenu.removeAllItems()
+        cpuMenuActive = true
         
+        cpuMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         cpuMenu.addItem(loadingItem)
         
         cpuMenu.addItem(NSMenuItem.separator())
-        
-        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
-        cpuCloseItem.target = self
-        cpuMenu.addItem(cpuCloseItem)
-        
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
         
         cpuItem.menu = cpuMenu
         cpuItem.button?.performClick(nil)
-
+        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let topProcesses = self?.getTopCpuProcesses() ?? []
 
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.cpuMenuActive else { return }
                 self.cpuMenu.removeAllItems()
 
                 for (name, cpu) in topProcesses {
@@ -141,6 +157,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
                 cpuQuitItem.target = self
                 self.cpuMenu.addItem(cpuQuitItem)
+                
+                self.cpuItem.button?.performClick(nil)
             }
         }
     }
@@ -185,28 +203,91 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showMemoryMenu(_ sender: AnyObject?) {
         guard let memoryItem = memoryItem else { return }
-        memoryMenu.removeAllItems()
-
-        let (used, total, _) = getMemoryUsage()
-        let usedStr = formatBytes(used)
-        let totalStr = formatBytes(total)
-
-        let memItem = NSMenuItem(title: "已用: \(usedStr) / \(totalStr)", action: nil, keyEquivalent: "")
-        memItem.isEnabled = false
-        memoryMenu.addItem(memItem)
-
-        memoryMenu.addItem(NSMenuItem.separator())
         
-        let memCloseItem = NSMenuItem(title: "关闭", action: #selector(closeMemoryItem), keyEquivalent: "")
-        memCloseItem.target = self
-        memoryMenu.addItem(memCloseItem)
-
+        memoryMenu.removeAllItems()
+        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        memoryMenu.addItem(loadingItem)
+        
+        memoryMenu.addItem(NSMenuItem.separator())
         let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         memQuitItem.target = self
         memoryMenu.addItem(memQuitItem)
 
         memoryItem.menu = memoryMenu
+        memoryMenuActive = true
         memoryItem.button?.performClick(nil)
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let topProcesses = self?.getTopMemoryProcesses() ?? []
+
+            DispatchQueue.main.async {
+                guard let self = self, self.memoryMenuActive else { return }
+                
+                let (used, total, _) = self.getMemoryUsage()
+                let usedStr = self.formatBytes(used)
+                let totalStr = self.formatBytes(total)
+                
+                self.memoryMenu.removeAllItems()
+
+                let memItem = NSMenuItem(title: "已用: \(usedStr) / \(totalStr)", action: nil, keyEquivalent: "")
+                memItem.isEnabled = false
+                self.memoryMenu.addItem(memItem)
+
+                self.memoryMenu.addItem(NSMenuItem.separator())
+
+                for (name, mem) in topProcesses {
+                    let item = NSMenuItem(title: "\(mem) \(name)", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    self.memoryMenu.addItem(item)
+                }
+
+                self.memoryMenu.addItem(NSMenuItem.separator())
+
+                let memQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
+                memQuitItem.target = self
+                self.memoryMenu.addItem(memQuitItem)
+                
+                self.memoryItem.button?.performClick(nil)
+            }
+        }
+    }
+
+    func getTopMemoryProcesses() -> [(String, String)] {
+        let task = Process()
+        task.launchPath = "/bin/ps"
+        task.arguments = ["-eo", "rss,comm", "-m"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var processes: [(String, String)] = []
+        let lines = output.components(separatedBy: "\n")
+
+        for line in lines.dropFirst() {
+            let components = line.split(whereSeparator: { $0.isWhitespace })
+            guard components.count >= 2 else { continue }
+
+            if let rss = UInt64(components[0].description), rss > 0 {
+                let name = components.last?.description ?? "Unknown"
+                let memStr = formatBytes(rss * 1024)
+                processes.append((name, memStr))
+                if processes.count >= 5 { break }
+            }
+        }
+
+        return processes
     }
 
     func getMemoryUsage() -> (used: UInt64, total: UInt64, percent: Double) {
