@@ -194,7 +194,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func getTopNetworkProcesses() -> [(String, String, String)] {
         guard let first = runNettopOnce() else { return [] }
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 2.0)
         guard let second = runNettopOnce() else { return [] }
 
         var processes: [(String, String, String)] = []
@@ -202,15 +202,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
                 let inBytes = secondIn > firstIn ? secondIn - firstIn : 0
                 let outBytes = secondOut > firstOut ? secondOut - firstOut : 0
-                if inBytes > 0 || outBytes > 0 {
-                    let inStr = formatBytes(inBytes)
-                    let outStr = formatBytes(outBytes)
-                    processes.append((name, inStr, outStr))
-                }
+                let inStr = formatBytes(inBytes)
+                let outStr = formatBytes(outBytes)
+                processes.append((name, inStr, outStr))
             }
         }
 
-        // 按总流量排序，取Top 5
         let sorted = processes.sorted { a, b in
             let aTotal = parseBytesToNum(a.1) + parseBytesToNum(a.2)
             let bTotal = parseBytesToNum(b.1) + parseBytesToNum(b.2)
@@ -249,8 +246,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let inBytes = UInt64(components[1].trimmingCharacters(in: .whitespaces)),
                   let outBytes = UInt64(components[2].trimmingCharacters(in: .whitespaces)) else { continue }
 
-            // 去掉 .pid 后缀
-            let name = nameWithPid.components(separatedBy: ".").dropLast().joined(separator: ".")
+            // 去掉 .pid 后缀（最后一个 . 后面全是数字的部分）
+            var name = nameWithPid
+            if let lastDotRange = name.range(of: ".", options: .backwards) {
+                let suffix = name[lastDotRange.upperBound...]
+                if suffix.allSatisfy({ $0.isNumber }) {
+                    name = String(name[..<lastDotRange.lowerBound])
+                }
+            }
             results.append((name, inBytes, outBytes))
         }
 
@@ -614,13 +617,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func formatBytes(_ bytes: UInt64) -> String {
-        let gb = Double(bytes) / 1024 / 1024 / 1024
-        let mb = Double(bytes) / 1024 / 1024
+        let kb = Double(bytes) / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
 
         if gb >= 1 {
             return String(format: "%.1fGB", gb)
+        } else if mb >= 1 {
+            return String(format: "%.1fMB", mb)
+        } else if kb >= 1 {
+            return String(format: "%.0fKB", kb)
         } else {
-            return String(format: "%.0fMB", mb)
+            return "0B"
         }
     }
 
