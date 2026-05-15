@@ -146,9 +146,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
+        let coreCount = Double(ProcessInfo.processInfo.processorCount)
         let task = Process()
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-c", "top -l 1 -n 5 -o cpu | head -20"]
+        task.launchPath = "/bin/ps"
+        task.arguments = ["-eo", "pcpu,comm", "-r"]
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -167,13 +168,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var processes: [(String, Double)] = []
         let lines = output.components(separatedBy: "\n")
 
-        for line in lines {
+        for line in lines.dropFirst() {
             let components = line.split(whereSeparator: { $0.isWhitespace })
             guard components.count >= 2 else { continue }
 
-            if let cpu = Double(components[0].description), cpu > 0 && cpu < 100 {
-                let name = components.count > 5 ? components[5].description : components.last?.description ?? "Unknown"
-                processes.append((name, cpu))
+            if let cpu = Double(components[0].description), cpu > 0 {
+                let name = components.last?.description ?? "Unknown"
+                let normalizedCpu = cpu / coreCount
+                processes.append((name, normalizedCpu))
                 if processes.count >= 5 { break }
             }
         }
