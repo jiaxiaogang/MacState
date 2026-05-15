@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hdMenu.addItem(hdQuitItem)
 
         if let button = hdItem.button {
-            button.title = "HD0%"
+            button.title = "H0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showHdMenu(_:))
@@ -45,7 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         memoryMenu.addItem(memQuitItem)
 
         if let button = memoryItem.button {
-            button.title = "MEM0%"
+            button.title = "M0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showMemoryMenu(_:))
@@ -63,7 +63,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cpuMenu.addItem(cpuQuitItem)
 
         if let button = cpuItem.button {
-            button.title = "CPU0%"
+            button.title = "C0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showCpuMenu(_:))
@@ -341,6 +341,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
      func updateSpeed() {
         let (currentUploaded, currentDownloaded) = getNetworkBytes()
+        if lastUploaded == 0 && lastDownloaded == 0 {
+            lastUploaded = currentUploaded
+            lastDownloaded = currentDownloaded
+            return
+        }
         let uploaded = currentUploaded > lastUploaded ? currentUploaded - lastUploaded : 0
         let downloaded = currentDownloaded > lastDownloaded ? currentDownloaded - lastDownloaded : 0
         lastUploaded = currentUploaded
@@ -354,18 +359,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let cpuUsage = getCpuUsage()
         if let button = cpuItem?.button {
-            button.title = "CPU" + String(cpuUsage) + "%"
+            button.title = "C" + String(cpuUsage) + "%"
         }
 
         let (_, _, memPercent) = getMemoryUsage()
         if let button = memoryItem?.button {
-            button.title = "MEM" + String(Int(memPercent)) + "%"
+            button.title = "M" + String(Int(memPercent)) + "%"
         }
 
         _ = getDiskUsage()
         let freeSpace = getFreeDiskSpace()
         if let button = hdItem?.button {
-            button.title = "HD" + freeSpace
+            button.title = "H" + freeSpace
         }
     }
 
