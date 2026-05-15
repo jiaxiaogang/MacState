@@ -18,6 +18,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var memoryMenuActive = false
     
     var networkMenuActive = false
+    var networkUpdateTimer: Timer?
+    var networkInitSeconds = 0
+    var networkLastData: [(String, UInt64, UInt64)]?
+    var networkLastUpdateTime: Date?
 
     func log(_ msg: String) {
         let path = NSHomeDirectory() + "/Desktop/repos/MacState/log.txt"
@@ -133,6 +137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func showNetworkMenu(_ sender: AnyObject?) {
         guard let networkItem = networkItem else { return }
         networkMenuActive = true
+        networkInitSeconds = 0
 
         networkMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中... (0/2秒)", action: nil, keyEquivalent: "")
@@ -146,41 +151,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         networkItem.menu = networkMenu
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            guard let first = self.runNettopOnce() else {
-                DispatchQueue.main.async { self.updateNetworkMenuWithError() }
-                return
-            }
-            
-            DispatchQueue.main.async {
-                guard self.networkMenuActive else { return }
+        networkUpdateTimer?.invalidate()
+        networkUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateNetworkMenuData()
+        }
+        updateNetworkMenuData()
+    }
+
+    func updateNetworkMenuData() {
+        guard networkMenuActive else {
+            networkUpdateTimer?.invalidate()
+            networkUpdateTimer = nil
+            return
+        }
+
+        networkInitSeconds += 1
+
+        if networkInitSeconds <= 2 {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.networkMenuActive else { return }
                 if let item = self.networkMenu.items.first {
-                    item.title = "加载中... (1/2秒)"
+                    item.title = "加载中... (\(self.networkInitSeconds)/2秒)"
                 }
             }
-            
-            Thread.sleep(forTimeInterval: 2.0)
-            
-            guard let second = self.runNettopOnce() else {
-                DispatchQueue.main.async { self.updateNetworkMenuWithError() }
-                return
-            }
-            
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, let currentData = self.runNettopOnce() else { return }
+
+            let now = Date()
             var processes: [(String, String, String)] = []
-            for (name, firstIn, firstOut) in first {
-                if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
-                    let inBytes = secondIn > firstIn ? (secondIn - firstIn) / 2 : 0
-                    let outBytes = secondOut > firstOut ? (secondOut - firstOut) / 2 : 0
-                    let inStr = self.formatBytes(inBytes)
-                    let outStr = self.formatBytes(outBytes)
-                    if inBytes > 0 || outBytes > 0 {
-                        processes.append((name, inStr, outStr))
+
+            if let lastData = self.networkLastData, let lastTime = self.networkLastUpdateTime {
+                let interval = now.timeIntervalSince(lastTime)
+                if interval > 0 {
+                    for (name, currIn, currOut) in currentData {
+                        if let (_, lastIn, lastOut) = lastData.first(where: { $0.0 == name }) {
+                            let inBytes = currIn > lastIn ? UInt64(Double(currIn - lastIn) / interval) : 0
+                            let outBytes = currOut > lastOut ? UInt64(Double(currOut - lastOut) / interval) : 0
+                            let inStr = self.formatBytes(inBytes)
+                            let outStr = self.formatBytes(outBytes)
+                            if inBytes > 0 || outBytes > 0 {
+                                processes.append((name, inStr, outStr))
+                            }
+                        }
                     }
                 }
             }
-            
+
+            self.networkLastData = currentData
+            self.networkLastUpdateTime = now
+
             let sorted = processes.sorted { a, b in
                 let aTotal = self.parseBytesToNum(a.1) + self.parseBytesToNum(a.2)
                 let bTotal = self.parseBytesToNum(b.1) + self.parseBytesToNum(b.2)
@@ -204,7 +225,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.networkMenu.addItem(NSMenuItem.separator())
 
                 for (name, bytesIn, bytesOut) in topProcesses {
-                    let item = NSMenuItem(title: "↓\(bytesIn) ↑\(bytesOut) \(name)", action: nil, keyEquivalent: "")
+                    let item = NSMenuItem(title: "↑\(bytesOut) ↓\(bytesIn) \(name)", action: nil, keyEquivalent: "")
                     item.isEnabled = false
                     self.networkMenu.addItem(item)
                 }
@@ -221,20 +242,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
-    
-    func updateNetworkMenuWithError() {
-        guard networkMenuActive else { return }
-        networkMenu.removeAllItems()
-        let errorItem = NSMenuItem(title: "加载失败", action: nil, keyEquivalent: "")
-        errorItem.isEnabled = false
-        networkMenu.addItem(errorItem)
-        
-        networkMenu.addItem(NSMenuItem.separator())
-        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        netQuitItem.target = self
-        networkMenu.addItem(netQuitItem)
-    }
-
 
     func runNettopOnce() -> [(String, UInt64, UInt64)]? {
         let task = Process()
@@ -307,6 +314,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.log("memoryMenuActive = false")
         } else if menu === networkMenu {
             networkMenuActive = false
+            networkUpdateTimer?.invalidate()
+            networkUpdateTimer = nil
             self.log("networkMenuActive = false")
         }
     }
