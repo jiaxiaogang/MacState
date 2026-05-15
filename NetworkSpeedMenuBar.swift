@@ -200,11 +200,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var processes: [(String, String, String)] = []
         for (name, firstIn, firstOut) in first {
             if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
-                let inBytes = secondIn > firstIn ? secondIn - firstIn : 0
-                let outBytes = secondOut > firstOut ? secondOut - firstOut : 0
+                let inBytes = secondIn > firstIn ? (secondIn - firstIn) / 2 : 0
+                let outBytes = secondOut > firstOut ? (secondOut - firstOut) / 2 : 0
                 let inStr = formatBytes(inBytes)
                 let outStr = formatBytes(outBytes)
-                processes.append((name, inStr, outStr))
+                if inBytes > 0 || outBytes > 0 {
+                    processes.append((name, inStr, outStr))
+                }
             }
         }
 
