@@ -16,39 +16,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hdMenu: NSMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 网络状态项
-        networkItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        networkMenu = NSMenu()
-        let netCloseItem = NSMenuItem(title: "关闭", action: #selector(closeNetworkItem), keyEquivalent: "")
-        netCloseItem.target = self
-        networkMenu.addItem(netCloseItem)
-        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        netQuitItem.target = self
-        networkMenu.addItem(netQuitItem)
+        // 磁盘状态项
+        hdItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        hdMenu = NSMenu()
+        let hdCloseItem = NSMenuItem(title: "关闭", action: #selector(closeHdItem), keyEquivalent: "")
+        hdCloseItem.target = self
+        hdMenu.addItem(hdCloseItem)
+        let hdQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        hdQuitItem.target = self
+        hdMenu.addItem(hdQuitItem)
 
-        if let button = networkItem.button {
-            button.title = "↑0B↓0B"
+        if let button = hdItem.button {
+            button.title = "HD0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
-            button.action = #selector(showNetworkMenu(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-
-        // CPU 状态项
-        cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        cpuMenu = NSMenu()
-        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
-        cpuCloseItem.target = self
-        cpuMenu.addItem(cpuCloseItem)
-        let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        cpuQuitItem.target = self
-        cpuMenu.addItem(cpuQuitItem)
-
-        if let button = cpuItem.button {
-            button.title = "CPU0%"
-            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-            button.target = self
-            button.action = #selector(showCpuMenu(_:))
+            button.action = #selector(showHdMenu(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
@@ -70,21 +52,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        // 磁盘状态项
-        hdItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        hdMenu = NSMenu()
-        let hdCloseItem = NSMenuItem(title: "关闭", action: #selector(closeHdItem), keyEquivalent: "")
-        hdCloseItem.target = self
-        hdMenu.addItem(hdCloseItem)
-        let hdQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
-        hdQuitItem.target = self
-        hdMenu.addItem(hdQuitItem)
+        // CPU 状态项
+        cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        cpuMenu = NSMenu()
+        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
+        cpuCloseItem.target = self
+        cpuMenu.addItem(cpuCloseItem)
+        let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        cpuQuitItem.target = self
+        cpuMenu.addItem(cpuQuitItem)
 
-        if let button = hdItem.button {
-            button.title = "HD0%"
+        if let button = cpuItem.button {
+            button.title = "CPU0%"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
-            button.action = #selector(showHdMenu(_:))
+            button.action = #selector(showCpuMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        // 网络状态项
+        networkItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        networkMenu = NSMenu()
+        let netCloseItem = NSMenuItem(title: "关闭", action: #selector(closeNetworkItem), keyEquivalent: "")
+        netCloseItem.target = self
+        networkMenu.addItem(netCloseItem)
+        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        netQuitItem.target = self
+        networkMenu.addItem(netQuitItem)
+
+        if let button = networkItem.button {
+            button.title = "↑0B↓0B"
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.target = self
+            button.action = #selector(showNetworkMenu(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
