@@ -362,7 +362,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.title = "MEM" + String(Int(memPercent)) + "%"
         }
 
-        let hdPercent = getDiskUsage()
+        _ = getDiskUsage()
         let freeSpace = getFreeDiskSpace()
         if let button = hdItem?.button {
             button.title = "HD" + freeSpace
