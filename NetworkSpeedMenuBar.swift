@@ -131,14 +131,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showNetworkMenu(_ sender: AnyObject?) {
-        self.log("showNetworkMenu 被调用")
         guard let networkItem = networkItem else { return }
         networkMenuActive = true
-        self.log("networkMenuActive 设为 true")
 
-        self.log("开始加载 Network 菜单")
         networkMenu.removeAllItems()
-        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
+        let loadingItem = NSMenuItem(title: "加载中... (0/2秒)", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         networkMenu.addItem(loadingItem)
 
@@ -150,19 +147,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         networkItem.menu = networkMenu
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.log("开始异步获取 Network 数据")
-            let topProcesses = self?.getTopNetworkProcesses() ?? []
-            self?.log("获取到 \(topProcesses.count) 个进程")
+            guard let self = self else { return }
+            
+            guard let first = self.runNettopOnce() else {
+                DispatchQueue.main.async { self.updateNetworkMenuWithError() }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                guard self.networkMenuActive else { return }
+                if let item = self.networkMenu.items.first {
+                    item.title = "加载中... (1/2秒)"
+                }
+            }
+            
+            Thread.sleep(forTimeInterval: 2.0)
+            
+            guard let second = self.runNettopOnce() else {
+                DispatchQueue.main.async { self.updateNetworkMenuWithError() }
+                return
+            }
+            
+            var processes: [(String, String, String)] = []
+            for (name, firstIn, firstOut) in first {
+                if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
+                    let inBytes = secondIn > firstIn ? (secondIn - firstIn) / 2 : 0
+                    let outBytes = secondOut > firstOut ? (secondOut - firstOut) / 2 : 0
+                    let inStr = self.formatBytes(inBytes)
+                    let outStr = self.formatBytes(outBytes)
+                    if inBytes > 0 || outBytes > 0 {
+                        processes.append((name, inStr, outStr))
+                    }
+                }
+            }
+            
+            let sorted = processes.sorted { a, b in
+                let aTotal = self.parseBytesToNum(a.1) + self.parseBytesToNum(a.2)
+                let bTotal = self.parseBytesToNum(b.1) + self.parseBytesToNum(b.2)
+                return aTotal > bTotal
+            }
+            let topProcesses = Array(sorted.prefix(5))
 
             DispatchQueue.main.async { [weak self] in
-                self?.log("主线程更新 Network 菜单, networkMenuActive=\(self?.networkMenuActive ?? false)")
-                guard let self = self, self.networkMenuActive else { self?.log("networkMenuActive 为 false 或 self 为 nil"); return }
+                guard let self = self, self.networkMenuActive else { return }
 
                 let (uploaded, downloaded) = self.getNetworkBytes()
                 let uploadStr = self.formatSpeed(uploaded)
                 let downloadStr = self.formatSpeed(downloaded)
 
-                self.log("网速: ↑\(uploadStr) ↓\(downloadStr)")
                 self.networkMenu.removeAllItems()
 
                 let netItem = NSMenuItem(title: "↑\(uploadStr) ↓\(downloadStr)", action: nil, keyEquivalent: "")
@@ -186,37 +218,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let netQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
                 netQuitItem.target = self
                 self.networkMenu.addItem(netQuitItem)
-                self.log("Network 菜单更新完成")
             }
         }
     }
-
-
-    func getTopNetworkProcesses() -> [(String, String, String)] {
-        guard let first = runNettopOnce() else { return [] }
-        Thread.sleep(forTimeInterval: 2.0)
-        guard let second = runNettopOnce() else { return [] }
-
-        var processes: [(String, String, String)] = []
-        for (name, firstIn, firstOut) in first {
-            if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
-                let inBytes = secondIn > firstIn ? (secondIn - firstIn) / 2 : 0
-                let outBytes = secondOut > firstOut ? (secondOut - firstOut) / 2 : 0
-                let inStr = formatBytes(inBytes)
-                let outStr = formatBytes(outBytes)
-                if inBytes > 0 || outBytes > 0 {
-                    processes.append((name, inStr, outStr))
-                }
-            }
-        }
-
-        let sorted = processes.sorted { a, b in
-            let aTotal = parseBytesToNum(a.1) + parseBytesToNum(a.2)
-            let bTotal = parseBytesToNum(b.1) + parseBytesToNum(b.2)
-            return aTotal > bTotal
-        }
-        return Array(sorted.prefix(5))
+    
+    func updateNetworkMenuWithError() {
+        guard networkMenuActive else { return }
+        networkMenu.removeAllItems()
+        let errorItem = NSMenuItem(title: "加载失败", action: nil, keyEquivalent: "")
+        errorItem.isEnabled = false
+        networkMenu.addItem(errorItem)
+        
+        networkMenu.addItem(NSMenuItem.separator())
+        let netQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        netQuitItem.target = self
+        networkMenu.addItem(netQuitItem)
     }
+
 
     func runNettopOnce() -> [(String, UInt64, UInt64)]? {
         let task = Process()
