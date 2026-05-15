@@ -193,6 +193,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
                 self.cpuMenu.addItem(NSMenuItem.separator())
 
+                let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(self.closeCpuItem), keyEquivalent: "")
+                cpuCloseItem.target = self
+                self.cpuMenu.addItem(cpuCloseItem)
+
                 let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
                 cpuQuitItem.target = self
                 self.cpuMenu.addItem(cpuQuitItem)
@@ -246,6 +250,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
 
                 self.memoryMenu.addItem(NSMenuItem.separator())
+
+                let memCloseItem = NSMenuItem(title: "关闭", action: #selector(self.closeMemoryItem), keyEquivalent: "")
+                memCloseItem.target = self
+                self.memoryMenu.addItem(memCloseItem)
 
                 let memQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
                 memQuitItem.target = self
