@@ -217,11 +217,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let components = line.components(separatedBy: ",")
             guard components.count >= 3 else { continue }
 
-            let name = components[0]
+            let nameWithPid = components[0].trimmingCharacters(in: .whitespaces)
             guard let inBytes = UInt64(components[1].trimmingCharacters(in: .whitespaces)),
                   let outBytes = UInt64(components[2].trimmingCharacters(in: .whitespaces)) else { continue }
 
             if inBytes > 0 || outBytes > 0 {
+                // 去掉 .pid 后缀
+                let name = nameWithPid.components(separatedBy: ".").dropLast().joined(separator: ".")
                 let inStr = formatBytes(inBytes)
                 let outStr = formatBytes(outBytes)
                 processes.append((name, inStr, outStr))
@@ -441,7 +443,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard components.count >= 2 else { continue }
 
             if let cpu = Double(components[0].description), cpu > 0 {
-                let name = components.last?.description ?? "Unknown"
+                let fullPath = components.last?.description ?? "Unknown"
+                let name = (fullPath as NSString).lastPathComponent
                 let normalizedCpu = cpu / coreCount
                 processes.append((name, normalizedCpu))
                 if processes.count >= 5 { break }
@@ -535,7 +538,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard components.count >= 2 else { continue }
 
             if let rss = UInt64(components[0].description), rss > 0 {
-                let name = components.last?.description ?? "Unknown"
+                let fullPath = components.last?.description ?? "Unknown"
+                let name = (fullPath as NSString).lastPathComponent
                 let memStr = formatBytes(rss * 1024)
                 processes.append((name, memStr))
                 if processes.count >= 5 { break }
