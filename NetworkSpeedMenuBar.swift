@@ -191,7 +191,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+
     func getTopNetworkProcesses() -> [(String, String, String)] {
+        guard let first = runNettopOnce() else { return [] }
+        Thread.sleep(forTimeInterval: 1.0)
+        guard let second = runNettopOnce() else { return [] }
+
+        var processes: [(String, String, String)] = []
+        for (name, firstIn, firstOut) in first {
+            if let (_, secondIn, secondOut) = second.first(where: { $0.0 == name }) {
+                let inBytes = secondIn > firstIn ? secondIn - firstIn : 0
+                let outBytes = secondOut > firstOut ? secondOut - firstOut : 0
+                if inBytes > 0 || outBytes > 0 {
+                    let inStr = formatBytes(inBytes)
+                    let outStr = formatBytes(outBytes)
+                    processes.append((name, inStr, outStr))
+                }
+            }
+        }
+
+        // 按总流量排序，取Top 5
+        let sorted = processes.sorted { a, b in
+            let aTotal = parseBytesToNum(a.1) + parseBytesToNum(a.2)
+            let bTotal = parseBytesToNum(b.1) + parseBytesToNum(b.2)
+            return aTotal > bTotal
+        }
+        return Array(sorted.prefix(5))
+    }
+
+    func runNettopOnce() -> [(String, UInt64, UInt64)]? {
         let task = Process()
         task.launchPath = "/usr/bin/nettop"
         task.arguments = ["-P", "-L", "1", "-J", "bytes_in,bytes_out"]
@@ -204,13 +232,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try task.run()
             task.waitUntilExit()
         } catch {
-            return []
+            return nil
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        guard let output = String(data: data, encoding: .utf8) else { return nil }
 
-        var processes: [(String, String, String)] = []
+        var results: [(String, UInt64, UInt64)] = []
         let lines = output.components(separatedBy: "\n")
 
         for line in lines.dropFirst() {
@@ -221,17 +249,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let inBytes = UInt64(components[1].trimmingCharacters(in: .whitespaces)),
                   let outBytes = UInt64(components[2].trimmingCharacters(in: .whitespaces)) else { continue }
 
-            if inBytes > 0 || outBytes > 0 {
-                // 去掉 .pid 后缀
-                let name = nameWithPid.components(separatedBy: ".").dropLast().joined(separator: ".")
-                let inStr = formatBytes(inBytes)
-                let outStr = formatBytes(outBytes)
-                processes.append((name, inStr, outStr))
-                if processes.count >= 5 { break }
-            }
+            // 去掉 .pid 后缀
+            let name = nameWithPid.components(separatedBy: ".").dropLast().joined(separator: ".")
+            results.append((name, inBytes, outBytes))
         }
 
-        return processes
+        return results
+    }
+
+    func parseBytesToNum(_ str: String) -> UInt64 {
+        if str.hasSuffix("GB") {
+            let num = str.replacingOccurrences(of: "GB", with: "")
+            return UInt64((Double(num) ?? 0) * 1024 * 1024 * 1024)
+        } else if str.hasSuffix("MB") {
+            let num = str.replacingOccurrences(of: "MB", with: "")
+            return UInt64((Double(num) ?? 0) * 1024 * 1024)
+        } else if str.hasSuffix("KB") {
+            let num = str.replacingOccurrences(of: "KB", with: "")
+            return UInt64((Double(num) ?? 0) * 1024)
+        } else if str.hasSuffix("B") {
+            let num = str.replacingOccurrences(of: "B", with: "")
+            return UInt64(Double(num) ?? 0)
+        }
+        return 0
     }
 
     func menuDidClose(_ menu: NSMenu) {
