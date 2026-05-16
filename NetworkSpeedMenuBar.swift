@@ -71,7 +71,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 内存状态项
         memoryItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         memoryMenu = NSMenu()
-        memoryMenu.delegate = self
         let memCloseItem = NSMenuItem(title: "关闭", action: #selector(closeMemoryItem), keyEquivalent: "")
         memCloseItem.target = self
         memoryMenu.addItem(memCloseItem)
@@ -91,7 +90,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // CPU 状态项
         cpuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         cpuMenu = NSMenu()
-        cpuMenu.delegate = self
         let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
         cpuCloseItem.target = self
         cpuMenu.addItem(cpuCloseItem)
@@ -135,7 +133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showNetworkMenu(_ sender: AnyObject?) {
-        guard let networkItem = networkItem else { return }
+        guard networkItem != nil else { return }
         networkMenuActive = true
         networkInitSeconds = 0
 
@@ -149,7 +147,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         netQuitItem.target = self
         networkMenu.addItem(netQuitItem)
 
-        networkItem.menu = networkMenu
+        DispatchQueue.main.async { [weak self] in
+            self?.networkItem.menu = self?.networkMenu
+        }
 
         networkUpdateTimer?.invalidate()
         networkUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -325,11 +325,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if menu === cpuMenu {
             cpuMenuActive = true
             self.log("cpuMenuActive = true")
-            loadCpuData()
         } else if menu === memoryMenu {
             memoryMenuActive = true
             self.log("memoryMenuActive = true")
-            loadMemoryData()
         } else if menu === networkMenu {
             networkMenuActive = true
             self.log("networkMenuActive = true")
@@ -337,12 +335,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     
     func loadCpuData() {
-        self.log("开始加载 CPU 数据")
-        for item in cpuMenu.items {
-            if item.title == "加载中..." {
-                return
-            }
-        }
+        self.log("loadCpuData 开始")
         
         cpuMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
@@ -354,12 +347,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
         
+        self.log("准备启动异步任务")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.log("异步任务开始执行")
             let topProcesses = self?.getTopCpuProcesses() ?? []
-            self?.log("获取到 \(topProcesses.count) 个 CPU 进程")
+            self?.log("异步获取 CPU 数据完成, 进程数: \(topProcesses.count)")
 
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.cpuMenuActive else { self?.log("cpuMenuActive 为 false"); return }
+                guard let self = self else { self?.log("self 为 nil"); return }
+                self.log("主线程执行, cpuMenuActive=\(self.cpuMenuActive)")
                 
                 self.cpuMenu.removeAllItems()
 
@@ -381,15 +377,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.log("CPU 菜单更新完成")
             }
         }
+        self.log("loadCpuData 结束")
     }
     
     func loadMemoryData() {
         self.log("开始加载 Memory 数据")
-        for item in memoryMenu.items {
-            if item.title == "加载中..." {
-                return
-            }
-        }
         
         memoryMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
@@ -403,10 +395,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let topProcesses = self?.getTopMemoryProcesses() ?? []
-            self?.log("获取到 \(topProcesses.count) 个 Memory 进程")
+            self?.log("异步获取 Memory 数据完成, 进程数: \(topProcesses.count)")
 
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.memoryMenuActive else { self?.log("memoryMenuActive 为 false"); return }
+                guard let self = self else { self?.log("self 为 nil"); return }
+                self.log("主线程执行, memoryMenuActive=\(self.memoryMenuActive)")
                 
                 let (used, total, _) = self.getMemoryUsage()
                 let usedStr = self.formatBytes(used)
@@ -443,31 +436,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func showCpuMenu(_ sender: AnyObject?) {
         self.log("showCpuMenu 被调用")
-        guard let cpuItem = cpuItem else { self.log("cpuItem 为 nil"); return }
+        guard cpuItem != nil else { self.log("cpuItem 为 nil"); return }
         cpuMenuActive = true
         self.log("cpuMenuActive 设为 true")
-        
+
         self.log("开始加载 CPU 菜单")
         cpuMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         cpuMenu.addItem(loadingItem)
-        
+
         cpuMenu.addItem(NSMenuItem.separator())
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
-        
-        cpuItem.menu = cpuMenu
-        
+
+        // 设置菜单（异步，跟 network 一样）
+        DispatchQueue.main.async { [weak self] in
+            self?.cpuItem?.menu = self?.cpuMenu
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.log("开始异步获取 CPU 数据")
             let topProcesses = self?.getTopCpuProcesses() ?? []
             self?.log("获取到 \(topProcesses.count) 个进程")
 
             DispatchQueue.main.async { [weak self] in
-                self?.log("主线程更新 CPU 菜单, cpuMenuActive=\(self?.cpuMenuActive ?? false)")
-                guard let self = self, self.cpuMenuActive else { self?.log("cpuMenuActive 为 false 或 self 为 nil"); return }
+                self?.log("主线程更新 CPU 菜单")
+                guard let self = self else { return }
                 self.cpuMenu.removeAllItems()
                 self.log("移除旧菜单项，添加新项")
 
@@ -488,10 +484,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
-        let coreCount = Double(ProcessInfo.processInfo.processorCount)
+        self.log("getTopCpuProcesses 开始")
+        
         let task = Process()
-        task.launchPath = "/bin/ps"
-        task.arguments = ["-eo", "pcpu,comm", "-r"]
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-eo", "pid=,pcpu=,comm=", "-m"]
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -501,49 +498,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try task.run()
             task.waitUntilExit()
         } catch {
+            self.log("ps 执行失败: \(error)")
             return []
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        guard let output = String(data: data, encoding: .utf8) else {
+            self.log("读取 ps 输出失败")
+            return []
+        }
+        
+        self.log("ps 输出: \(output.prefix(100))")
 
         var processes: [(String, Double)] = []
         let lines = output.components(separatedBy: "\n")
 
-        for line in lines.dropFirst() {
+        for line in lines {
             let components = line.split(whereSeparator: { $0.isWhitespace })
-            guard components.count >= 2 else { continue }
+            guard components.count >= 3 else { continue }
 
-            if let cpu = Double(components[0].description), cpu > 0 {
-                let fullPath = components.last?.description ?? "Unknown"
-                let name = (fullPath as NSString).lastPathComponent
-                let normalizedCpu = cpu / coreCount
-                processes.append((name, normalizedCpu))
+            if let cpu = Double(components[1].description), cpu > 0 {
+                let name = String(components[2])
+                processes.append((name, cpu))
                 if processes.count >= 5 { break }
             }
         }
 
+        self.log("getTopCpuProcesses 结束, 结果数: \(processes.count)")
         return processes
     }
 
     @objc func showMemoryMenu(_ sender: AnyObject?) {
         self.log("showMemoryMenu 被调用")
-        guard let memoryItem = memoryItem else { self.log("memoryItem 为 nil"); return }
+        guard memoryItem != nil else { self.log("memoryItem 为 nil"); return }
         memoryMenuActive = true
         self.log("memoryMenuActive 设为 true")
-        
+
         self.log("开始加载 Memory 菜单")
         memoryMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         memoryMenu.addItem(loadingItem)
-        
+
         memoryMenu.addItem(NSMenuItem.separator())
         let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         memQuitItem.target = self
         memoryMenu.addItem(memQuitItem)
 
-        memoryItem.menu = memoryMenu
+        // 设置菜单（异步，跟 network 一样）
+        DispatchQueue.main.async { [weak self] in
+            self?.memoryItem?.menu = self?.memoryMenu
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.log("开始异步获取 Memory 数据")
@@ -551,9 +556,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.log("获取到 \(topProcesses.count) 个进程")
 
             DispatchQueue.main.async { [weak self] in
-                self?.log("主线程更新 Memory 菜单, memoryMenuActive=\(self?.memoryMenuActive ?? false)")
-                guard let self = self, self.memoryMenuActive else { self?.log("memoryMenuActive 为 false 或 self 为 nil"); return }
-                
+                self?.log("主线程更新 Memory 菜单")
+                guard let self = self else { return }
+
                 let (used, total, _) = self.getMemoryUsage()
                 let usedStr = self.formatBytes(used)
                 let totalStr = self.formatBytes(total)
