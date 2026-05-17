@@ -685,7 +685,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     func getTopMemoryProcesses() -> [(String, String)] {
         let task = Process()
         task.launchPath = "/bin/ps"
-        task.arguments = ["-eo", "rss,comm", "-m"]
+        task.arguments = ["-eo", "rss,comm"]
 
         let pipe = Pipe()
         task.standardOutput = pipe
