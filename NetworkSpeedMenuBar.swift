@@ -585,60 +585,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
-        self.log("getTopCpuProcesses: 开始执行 ps 命令")
+        let pipe = Pipe()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "/bin/ps -eo pid=,pcpu=,comm="]
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
         
-        var result: [(String, Double)] = []
-        let group = DispatchGroup()
-        
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/bin/ps")
-            task.arguments = ["-eo", "pid=,pcpu=,comm="]
-
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = FileHandle.nullDevice
-
-            do {
-                try task.run()
-                task.waitUntilExit()
-            } catch {
-                self?.log("getTopCpuProcesses: ps 执行失败")
-                group.leave()
-                return
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else {
-                self?.log("getTopCpuProcesses: 读取输出失败")
-                group.leave()
-                return
-            }
-
-            var processes: [(String, Double)] = []
-            let lines = output.components(separatedBy: "\n")
-
-            for line in lines.dropFirst() {
-                let components = line.split(whereSeparator: { $0.isWhitespace })
-                guard components.count >= 3 else { continue }
-
-                if let cpu = Double(components[1].description) {
-                    let name = String(components[2])
-                    if !name.isEmpty {
-                        processes.append((name, cpu))
-                    }
-                }
-            }
-
-            let sorted = processes.sorted { $0.1 > $1.1 }
-            result = Array(sorted.prefix(10))
-            group.leave()
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return []
         }
         
-        _ = group.wait(timeout: .now() + 5)
-        self.log("getTopCpuProcesses: 返回 \(result.count) 个进程")
-        return result
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8), !output.isEmpty else {
+            return []
+        }
+        
+        var processes: [(String, Double)] = []
+        let lines = output.components(separatedBy: "\n")
+        
+        for line in lines.dropFirst() {
+            let components = line.split(whereSeparator: { $0.isWhitespace })
+            guard components.count >= 3 else { continue }
+            
+            if let cpu = Double(components[1].description) {
+                let name = String(components[2])
+                if !name.isEmpty {
+                    processes.append((name, cpu))
+                }
+            }
+        }
+        
+        return processes.sorted { $0.1 > $1.1 }.prefix(10).map { $0 }
     }
 
     @objc func showMemoryMenu(_ sender: AnyObject?) {
