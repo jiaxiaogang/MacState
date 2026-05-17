@@ -24,6 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     var networkLastUpdateTime: Date?
 
     func log(_ msg: String) {
+        print(msg)
         let path = NSHomeDirectory() + "/Desktop/repos/MacState/log.txt"
         let date = Date()
         let fmt = DateFormatter()
@@ -585,48 +586,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
 
     func getTopCpuProcesses() -> [(String, Double)] {
         self.log("getTopCpuProcesses: 开始执行 ps 命令")
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-eo", "pid=,pcpu=,comm=", "-m"]
+        
+        var result: [(String, Double)] = []
+        let group = DispatchGroup()
+        
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/ps")
+            task.arguments = ["-eo", "pid=,pcpu=,comm="]
 
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
+            let pipe = Pipe()
+            task.standardOutput = pipe
+            task.standardError = FileHandle.nullDevice
 
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            self.log("getTopCpuProcesses: ps 执行失败")
-            return []
-        }
+            do {
+                try task.run()
+                task.waitUntilExit()
+            } catch {
+                self?.log("getTopCpuProcesses: ps 执行失败")
+                group.leave()
+                return
+            }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else {
-            self.log("getTopCpuProcesses: 读取输出失败")
-            return []
-        }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else {
+                self?.log("getTopCpuProcesses: 读取输出失败")
+                group.leave()
+                return
+            }
 
-        self.log("getTopCpuProcesses: ps 输出长度 \(output.count), 前100字符: \(output.prefix(100))")
+            var processes: [(String, Double)] = []
+            let lines = output.components(separatedBy: "\n")
 
-        var processes: [(String, Double)] = []
-        let lines = output.components(separatedBy: "\n")
+            for line in lines.dropFirst() {
+                let components = line.split(whereSeparator: { $0.isWhitespace })
+                guard components.count >= 3 else { continue }
 
-        for line in lines.dropFirst() {
-            let components = line.split(whereSeparator: { $0.isWhitespace })
-            guard components.count >= 3 else { continue }
-
-            if let cpu = Double(components[1].description) {
-                let name = String(components[2])
-                if !name.isEmpty {
-                    processes.append((name, cpu))
+                if let cpu = Double(components[1].description) {
+                    let name = String(components[2])
+                    if !name.isEmpty {
+                        processes.append((name, cpu))
+                    }
                 }
             }
-        }
 
-        // 按CPU使用率排序，取前10个
-        let sorted = processes.sorted { $0.1 > $1.1 }
-        let result = Array(sorted.prefix(10))
+            let sorted = processes.sorted { $0.1 > $1.1 }
+            result = Array(sorted.prefix(10))
+            group.leave()
+        }
+        
+        _ = group.wait(timeout: .now() + 5)
         self.log("getTopCpuProcesses: 返回 \(result.count) 个进程")
         return result
     }
