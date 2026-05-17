@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import Darwin
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewDelegate, NSTableViewDataSource, NSWindowDelegate {
     var networkItem: NSStatusItem!
     var cpuItem: NSStatusItem!
     var memoryItem: NSStatusItem!
@@ -434,53 +434,140 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc func showCpuMenu(_ sender: AnyObject?) {
-        self.log("showCpuMenu 被调用")
-        guard cpuItem != nil else { self.log("cpuItem 为 nil"); return }
-        cpuMenuActive = true
-        self.log("cpuMenuActive 设为 true")
+    var cpuDetailWindow: NSWindow?
+    var cpuDetailTimer: Timer?
+    var cpuProcesses: [(String, Double)] = []
 
-        self.log("开始加载 CPU 菜单")
+    @objc func showCpuMenu(_ sender: AnyObject?) {
+        guard cpuItem != nil else { return }
+        cpuMenuActive = true
+
         cpuMenu.removeAllItems()
-        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
-        loadingItem.isEnabled = false
-        cpuMenu.addItem(loadingItem)
+
+        let detailItem = NSMenuItem(title: "详情...", action: #selector(showCpuDetail), keyEquivalent: "")
+        detailItem.target = self
+        cpuMenu.addItem(detailItem)
 
         cpuMenu.addItem(NSMenuItem.separator())
+
+        let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(closeCpuItem), keyEquivalent: "")
+        cpuCloseItem.target = self
+        cpuMenu.addItem(cpuCloseItem)
+
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
 
-        // 设置菜单（异步，跟 network 一样）
         DispatchQueue.main.async { [weak self] in
             self?.cpuItem?.menu = self?.cpuMenu
         }
+    }
 
+    @objc func showCpuDetail() {
+        if cpuDetailWindow != nil {
+            cpuDetailWindow?.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 400),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "CPU 占用详情"
+        window.center()
+
+        let scrollView = NSScrollView(frame: window.contentView!.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+
+        let tableView = NSTableView(frame: scrollView.bounds)
+        tableView.autoresizingMask = [.width, .height]
+
+        let cpuColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("cpu"))
+        cpuColumn.title = "CPU"
+        cpuColumn.width = 60
+        tableView.addTableColumn(cpuColumn)
+
+        let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        nameColumn.title = "应用"
+        nameColumn.width = 200
+        tableView.addTableColumn(nameColumn)
+
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.tag = 100
+
+        scrollView.documentView = tableView
+        window.contentView?.addSubview(scrollView)
+
+        cpuDetailWindow = window
+        window.delegate = self
+        window.makeKeyAndOrderFront(nil)
+
+        cpuDetailTimer?.invalidate()
+        cpuDetailTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateCpuDetailTable()
+        }
+        updateCpuDetailTable()
+    }
+
+    func updateCpuDetailTable() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.log("开始异步获取 CPU 数据")
             let topProcesses = self?.getTopCpuProcesses() ?? []
-            self?.log("获取到 \(topProcesses.count) 个进程")
-
+            self?.cpuProcesses = topProcesses
             DispatchQueue.main.async { [weak self] in
-                self?.log("主线程更新 CPU 菜单")
-                guard let self = self else { return }
-                self.cpuMenu.removeAllItems()
-                self.log("移除旧菜单项，添加新项")
-
-                for (name, cpu) in topProcesses {
-                    let item = NSMenuItem(title: "\(String(format: "%.1f", cpu))% \(name)", action: nil, keyEquivalent: "")
-                    item.isEnabled = false
-                    self.cpuMenu.addItem(item)
+                guard let self = self, let window = self.cpuDetailWindow else { return }
+                if let scrollView = window.contentView?.subviews.first as? NSScrollView,
+                   let tableView = scrollView.documentView as? NSTableView {
+                    tableView.reloadData()
                 }
-
-                self.cpuMenu.addItem(NSMenuItem.separator())
-
-                let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
-                cpuQuitItem.target = self
-                self.cpuMenu.addItem(cpuQuitItem)
-                self.log("CPU 菜单更新完成")
             }
         }
+    }
+
+    // MARK: - NSTableViewDataSource
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        return cpuProcesses.count
+    }
+
+    // MARK: - NSTableViewDelegate
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < cpuProcesses.count else { return nil }
+        let (name, cpu) = cpuProcesses[row]
+
+        let cellId = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("")
+        var textField: NSTextField
+
+        if let existing = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField {
+            textField = existing
+        } else {
+            textField = NSTextField()
+            textField.identifier = cellId
+            textField.isBordered = false
+            textField.isEditable = false
+            textField.backgroundColor = .clear
+        }
+
+        if tableColumn?.identifier.rawValue == "cpu" {
+            textField.stringValue = String(format: "%.1f%%", cpu)
+        } else {
+            textField.stringValue = name
+        }
+
+        return textField
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        return 20
+    }
+
+    func closeCpuDetailWindow() {
+        cpuDetailTimer?.invalidate()
+        cpuDetailTimer = nil
+        cpuDetailWindow?.close()
+        cpuDetailWindow = nil
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
@@ -862,6 +949,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         return (totalUploaded, totalDownloaded)
+    }
+
+    // MARK: - NSWindowDelegate
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === cpuDetailWindow {
+            closeCpuDetailWindow()
+        }
     }
 
     func formatSpeed(_ bytes: UInt64) -> String {
