@@ -439,6 +439,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     var cpuProcesses: [(String, Double)] = []
 
     @objc func showCpuMenu(_ sender: AnyObject?) {
+        self.log("第1步: showCpuMenu 被调用")
         guard cpuItem != nil else { return }
         cpuMenuActive = true
 
@@ -458,12 +459,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
 
+        self.log("第2步: CPU菜单已构建，准备显示")
         DispatchQueue.main.async { [weak self] in
+            self?.log("第3步: 调用 cpuItem.menu = cpuMenu")
             self?.cpuItem?.menu = self?.cpuMenu
         }
     }
 
     @objc func showCpuDetail() {
+        self.log("第4步: showCpuDetail 被调用")
         if cpuDetailWindow != nil {
             cpuDetailWindow?.makeKeyAndOrderFront(nil)
             return
@@ -502,10 +506,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         scrollView.documentView = tableView
         window.contentView?.addSubview(scrollView)
 
+        self.log("第5步: 窗口创建完成，准备显示")
         cpuDetailWindow = window
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
+        self.log("第6步: 窗口已显示")
 
+        self.log("第7步: 创建定时器，每秒刷新")
         cpuDetailTimer?.invalidate()
         cpuDetailTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.updateCpuDetailTable()
@@ -514,16 +521,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     func updateCpuDetailTable() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let topProcesses = self?.getTopCpuProcesses() ?? []
-            self?.cpuProcesses = topProcesses
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self, let window = self.cpuDetailWindow else { return }
-                if let scrollView = window.contentView?.subviews.first as? NSScrollView,
-                   let tableView = scrollView.documentView as? NSTableView {
-                    tableView.reloadData()
-                }
-            }
+        self.log("第8步: updateCpuDetailTable 被调用")
+        // 直接在主线程执行 ps 命令
+        let topProcesses = getTopCpuProcesses()
+        self.cpuProcesses = topProcesses
+        self.log("第9步: 获取到 \(topProcesses.count) 个进程")
+
+        guard let window = self.cpuDetailWindow else {
+            self.log("第10步失败: window 为 nil")
+            return
+        }
+        if let scrollView = window.contentView?.subviews.first as? NSScrollView,
+           let tableView = scrollView.documentView as? NSTableView {
+            tableView.reloadData()
+            self.log("第10步: 表格刷新完成")
+        } else {
+            self.log("第10步失败: 找不到 tableView")
         }
     }
 
@@ -571,8 +584,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
-        self.log("getTopCpuProcesses 开始")
-        
+        self.log("getTopCpuProcesses: 开始执行 ps 命令")
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-eo", "pid=,pcpu=,comm=", "-m"]
@@ -585,34 +597,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             try task.run()
             task.waitUntilExit()
         } catch {
-            self.log("ps 执行失败: \(error)")
+            self.log("getTopCpuProcesses: ps 执行失败")
             return []
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else {
-            self.log("读取 ps 输出失败")
+            self.log("getTopCpuProcesses: 读取输出失败")
             return []
         }
-        
-        self.log("ps 输出: \(output.prefix(100))")
+
+        self.log("getTopCpuProcesses: ps 输出长度 \(output.count), 前100字符: \(output.prefix(100))")
 
         var processes: [(String, Double)] = []
         let lines = output.components(separatedBy: "\n")
 
-        for line in lines {
+        for line in lines.dropFirst() {
             let components = line.split(whereSeparator: { $0.isWhitespace })
             guard components.count >= 3 else { continue }
 
-            if let cpu = Double(components[1].description), cpu > 0 {
+            if let cpu = Double(components[1].description) {
                 let name = String(components[2])
-                processes.append((name, cpu))
-                if processes.count >= 5 { break }
+                if !name.isEmpty {
+                    processes.append((name, cpu))
+                }
             }
         }
 
-        self.log("getTopCpuProcesses 结束, 结果数: \(processes.count)")
-        return processes
+        // 按CPU使用率排序，取前10个
+        let sorted = processes.sorted { $0.1 > $1.1 }
+        let result = Array(sorted.prefix(10))
+        self.log("getTopCpuProcesses: 返回 \(result.count) 个进程")
+        return result
     }
 
     @objc func showMemoryMenu(_ sender: AnyObject?) {
