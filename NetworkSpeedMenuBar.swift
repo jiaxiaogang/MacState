@@ -16,7 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     var hdMenu: NSMenu!
     var cpuMenuActive = false
     var memoryMenuActive = false
-    
+
     var networkMenuActive = false
     var networkUpdateTimer: Timer?
     var networkInitSeconds = 0
@@ -334,20 +334,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             self.log("networkMenuActive = true")
         }
     }
-    
+
     func loadCpuData() {
         self.log("loadCpuData 开始")
-        
+
         cpuMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         cpuMenu.addItem(loadingItem)
-        
+
         cpuMenu.addItem(NSMenuItem.separator())
         let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         cpuQuitItem.target = self
         cpuMenu.addItem(cpuQuitItem)
-        
+
         self.log("准备启动异步任务")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.log("异步任务开始执行")
@@ -357,7 +357,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { self?.log("self 为 nil"); return }
                 self.log("主线程执行, cpuMenuActive=\(self.cpuMenuActive)")
-                
+
                 self.cpuMenu.removeAllItems()
 
                 for (name, cpu) in topProcesses {
@@ -380,20 +380,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         }
         self.log("loadCpuData 结束")
     }
-    
+
     func loadMemoryData() {
         self.log("开始加载 Memory 数据")
-        
+
         memoryMenu.removeAllItems()
         let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
         loadingItem.isEnabled = false
         memoryMenu.addItem(loadingItem)
-        
+
         memoryMenu.addItem(NSMenuItem.separator())
         let memQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         memQuitItem.target = self
         memoryMenu.addItem(memQuitItem)
-        
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let topProcesses = self?.getTopMemoryProcesses() ?? []
             self?.log("异步获取 Memory 数据完成, 进程数: \(topProcesses.count)")
@@ -401,11 +401,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { self?.log("self 为 nil"); return }
                 self.log("主线程执行, memoryMenuActive=\(self.memoryMenuActive)")
-                
+
                 let (used, total, _) = self.getMemoryUsage()
                 let usedStr = self.formatBytes(used)
                 let totalStr = self.formatBytes(total)
-                
+
                 self.log("内存: \(usedStr) / \(totalStr)")
                 self.memoryMenu.removeAllItems()
 
@@ -446,6 +446,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
 
         cpuMenu.removeAllItems()
 
+        let loadingItem = NSMenuItem(title: "加载中...", action: nil, keyEquivalent: "")
+        loadingItem.isEnabled = false
+        cpuMenu.addItem(loadingItem)
+
+        cpuMenu.addItem(NSMenuItem.separator())
+
         let detailItem = NSMenuItem(title: "详情...", action: #selector(showCpuDetail), keyEquivalent: "")
         detailItem.target = self
         cpuMenu.addItem(detailItem)
@@ -464,6 +470,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         DispatchQueue.main.async { [weak self] in
             self?.log("第3步: 调用 cpuItem.menu = cpuMenu")
             self?.cpuItem?.menu = self?.cpuMenu
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let topProcesses = self?.getTopCpuProcesses() ?? []
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+
+                self.cpuMenu.removeAllItems()
+
+                let detailItem = NSMenuItem(title: "详情...", action: #selector(self.showCpuDetail), keyEquivalent: "")
+                detailItem.target = self
+                self.cpuMenu.addItem(detailItem)
+
+                self.cpuMenu.addItem(NSMenuItem.separator())
+
+                for (name, cpu) in topProcesses {
+                    let item = NSMenuItem(title: "\(String(format: "%.1f", cpu))% \(name)", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    self.cpuMenu.addItem(item)
+                }
+
+                self.cpuMenu.addItem(NSMenuItem.separator())
+
+                let cpuCloseItem = NSMenuItem(title: "关闭", action: #selector(self.closeCpuItem), keyEquivalent: "")
+                cpuCloseItem.target = self
+                self.cpuMenu.addItem(cpuCloseItem)
+
+                let cpuQuitItem = NSMenuItem(title: "退出", action: #selector(self.quitApp), keyEquivalent: "q")
+                cpuQuitItem.target = self
+                self.cpuMenu.addItem(cpuQuitItem)
+            }
         }
     }
 
@@ -591,26 +629,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         task.arguments = ["-c", "/bin/ps -eo pid=,pcpu=,comm="]
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
-        
+
         do {
             try task.run()
             task.waitUntilExit()
         } catch {
             return []
         }
-        
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8), !output.isEmpty else {
             return []
         }
-        
+
         var processes: [(String, Double)] = []
         let lines = output.components(separatedBy: "\n")
-        
+
         for line in lines.dropFirst() {
             let components = line.split(whereSeparator: { $0.isWhitespace })
             guard components.count >= 3 else { continue }
-            
+
             if let cpu = Double(components[1].description) {
                 let name = String(components[2])
                 if !name.isEmpty {
@@ -618,7 +656,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
                 }
             }
         }
-        
+
         return processes.sorted { $0.1 > $1.1 }.prefix(10).map { $0 }
     }
 
@@ -656,7 +694,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
                 let (used, total, _) = self.getMemoryUsage()
                 let usedStr = self.formatBytes(used)
                 let totalStr = self.formatBytes(total)
-                
+
                 self.log("内存信息: \(usedStr) / \(totalStr)")
                 self.memoryMenu.removeAllItems()
 
@@ -763,19 +801,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
     }
-    
+
     @objc func closeNetworkItem() {
         NSStatusBar.system.removeStatusItem(networkItem)
         networkItem = nil
         checkAllClosed()
     }
-    
+
     @objc func closeCpuItem() {
         NSStatusBar.system.removeStatusItem(cpuItem)
         cpuItem = nil
         checkAllClosed()
     }
-    
+
     @objc func closeMemoryItem() {
         NSStatusBar.system.removeStatusItem(memoryItem)
         memoryItem = nil
@@ -856,7 +894,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             NSApplication.shared.terminate(nil)
         }
     }
-    
+
      func updateSpeed() {
         let (currentUploaded, currentDownloaded) = getNetworkBytes()
         if lastUploaded == 0 && lastDownloaded == 0 {
