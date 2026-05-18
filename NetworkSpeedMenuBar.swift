@@ -624,6 +624,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     func getTopCpuProcesses() -> [(String, Double)] {
+        let coreCount = ProcessInfo.processInfo.activeProcessorCount
         let pipe = Pipe()
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -653,7 +654,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             if let cpu = Double(components[1].description) {
                 let name = String(components[2])
                 if !name.isEmpty {
-                    processes.append((name, cpu))
+                    processes.append((name, cpu / Double(coreCount)))
                 }
             }
         }
