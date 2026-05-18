@@ -487,7 +487,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
                 self.cpuMenu.addItem(NSMenuItem.separator())
 
                 for (name, cpu) in topProcesses {
-                    let item = NSMenuItem(title: "\(String(format: "%.1f", cpu))% \(name)", action: nil, keyEquivalent: "")
+                    let processName = (name as NSString).lastPathComponent
+                    let item = NSMenuItem(title: "\(String(format: "%.1f", cpu))% \(processName)", action: nil, keyEquivalent: "")
                     item.isEnabled = false
                     self.cpuMenu.addItem(item)
                 }
