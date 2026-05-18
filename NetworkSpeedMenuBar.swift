@@ -800,6 +800,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     @objc func quitApp() {
+        networkUpdateTimer?.invalidate()
+        cpuDetailTimer?.invalidate()
         NSApplication.shared.terminate(nil)
     }
 
