@@ -741,7 +741,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
-        var processes: [(String, String)] = []
+        var processes: [(String, UInt64)] = []
         let lines = output.components(separatedBy: "\n")
 
         for line in lines.dropFirst() {
@@ -751,13 +751,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             if let rss = UInt64(components[0].description), rss > 0 {
                 let fullPath = components.last?.description ?? "Unknown"
                 let name = (fullPath as NSString).lastPathComponent
-                let memStr = formatBytes(rss * 1024)
-                processes.append((name, memStr))
-                if processes.count >= 5 { break }
+                processes.append((name, rss))
             }
         }
 
-        return processes
+        return processes.sorted { $0.1 > $1.1 }.prefix(5).map { (name, rss) in
+            (name, formatBytes(rss * 1024))
+        }
     }
 
     func getMemoryUsage() -> (used: UInt64, total: UInt64, percent: Double) {
