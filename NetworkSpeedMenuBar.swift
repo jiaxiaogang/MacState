@@ -1,12 +1,182 @@
 import Foundation
 import AppKit
 import Darwin
+import IOKit
 
+// MARK: - SMC Types
+
+private let kSMCUserClientOpen: UInt32 = 0
+private let kSMCHandleYPC: UInt32 = 2
+private let kSMCCallYPC: UInt32 = 5
+
+// Match C struct layout from AppleSMC kext:
+// offset  0: key (UInt32)
+// offset  4: vers (UInt32)
+// offset  8: keyInfo.dataSize (UInt32)
+// offset 12: keyInfo.dataType (UInt32)
+// offset 16: keyInfo.dataAttributes (UInt8)
+// offset 17: padding (UInt8)
+// offset 18: align pad (UInt16)
+// offset 20: result (UInt32)
+// offset 24: status (UInt8)
+// offset 25: command (UInt8)
+// offset 26: state (2 x UInt8)
+// offset 28: data32 (UInt32)
+// offset 32: bytes (32 x UInt8)
+private struct SMCKeyData_t {
+    var key: UInt32 = 0
+    var vers: UInt32 = 0
+    var keyInfo_dataSize: UInt32 = 0
+    var keyInfo_dataType: UInt32 = 0
+    var keyInfo_dataAttributes: UInt8 = 0
+    var padding: UInt8 = 0
+    var _align: UInt16 = 0
+    var result: UInt32 = 0
+    var status: UInt8 = 0
+    var command: UInt8 = 0
+    var state: (UInt8, UInt8) = (0, 0)
+    var data32: UInt32 = 0
+    var bytes: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+}
+
+private func fourCC(_ string: String) -> UInt32 {
+    let chars = Array(string.utf8)
+    var result: UInt32 = 0
+    for i in 0..<4 {
+        result = result << 8
+        if i < chars.count {
+            result |= UInt32(chars[i])
+        }
+    }
+    return result
+}
+
+
+// MARK: - Temperature Reader
+
+class TemperatureReader {
+    private var smcConn: io_connect_t = 0
+    private var smcAvailable = false
+
+    init() {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
+        if service != 0 {
+            let kr = IOServiceOpen(service, mach_task_self_, kSMCUserClientOpen, &smcConn)
+            IOObjectRelease(service)
+            smcAvailable = (kr == KERN_SUCCESS)
+        }
+    }
+
+    deinit {
+        if smcAvailable { IOServiceClose(smcConn) }
+    }
+
+    // Battery temperature fallback (IORegistry, works without entitlements)
+    private func getBatteryTemperature() -> Double? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+
+        guard let tempProp = IORegistryEntryCreateCFProperty(service, "Temperature" as CFString, kCFAllocatorDefault, 0) else {
+            return nil
+        }
+        let tempValue = tempProp.takeRetainedValue()
+        if let temp = tempValue as? Int {
+            return Double(temp) / 100.0
+        }
+        return nil
+    }
+
+    // SMC temperature (may not work on newer macOS without entitlements)
+    private func smcRead(key: String) -> Double? {
+        guard smcAvailable else { return nil }
+        let keyCode = fourCC(key)
+        let bufSize = 80
+
+        // Step 1: Get key info (command=9 at offset 25)
+        var inBuf = [UInt8](repeating: 0, count: bufSize)
+        var outBuf = [UInt8](repeating: 0, count: bufSize)
+        inBuf[0] = UInt8((keyCode >> 24) & 0xFF)
+        inBuf[1] = UInt8((keyCode >> 16) & 0xFF)
+        inBuf[2] = UInt8((keyCode >> 8) & 0xFF)
+        inBuf[3] = UInt8(keyCode & 0xFF)
+        inBuf[25] = 9
+
+        var outSize = bufSize
+        let kr1 = inBuf.withUnsafeMutableBufferPointer { ib in
+            outBuf.withUnsafeMutableBufferPointer { ob in
+                IOConnectCallStructMethod(smcConn, 2, ib.baseAddress, bufSize, ob.baseAddress, &outSize)
+            }
+        }
+        guard kr1 == 0 else { return nil }
+
+        let dataSize = (UInt32(outBuf[8]) << 24) | (UInt32(outBuf[9]) << 16) | (UInt32(outBuf[10]) << 8) | UInt32(outBuf[11])
+        let dataType = (UInt32(outBuf[12]) << 24) | (UInt32(outBuf[13]) << 16) | (UInt32(outBuf[14]) << 8) | UInt32(outBuf[15])
+
+        // Step 2: Read bytes (command=5)
+        inBuf = [UInt8](repeating: 0, count: bufSize)
+        outBuf = [UInt8](repeating: 0, count: bufSize)
+        inBuf[0] = UInt8((keyCode >> 24) & 0xFF)
+        inBuf[1] = UInt8((keyCode >> 16) & 0xFF)
+        inBuf[2] = UInt8((keyCode >> 8) & 0xFF)
+        inBuf[3] = UInt8(keyCode & 0xFF)
+        inBuf[25] = 5
+
+        outSize = bufSize
+        let kr2 = inBuf.withUnsafeMutableBufferPointer { ib in
+            outBuf.withUnsafeMutableBufferPointer { ob in
+                IOConnectCallStructMethod(smcConn, 2, ib.baseAddress, bufSize, ob.baseAddress, &outSize)
+            }
+        }
+        guard kr2 == 0 else { return nil }
+
+        if dataType == fourCC("SP78") && dataSize == 2 {
+            let temp = Double(outBuf[32]) + Double(outBuf[33]) / 256.0
+            if temp > 0 && temp < 130 { return temp }
+        }
+        return nil
+    }
+
+    func getTemperature() -> Double? {
+        // Try SMC CPU keys first
+        let cpuKeys = ["TC0D", "TC0P", "TC0E", "TC0F", "TC0C"]
+        for key in cpuKeys {
+            if let temp = smcRead(key: key) { return temp }
+        }
+
+        // Apple Silicon keys
+        let appleKeys = [
+            "Tp01", "Tp05", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0X", "Tp0b",
+            "Tp09", "Tp0T", "Tp0f", "Tp0j", "Tp0n", "Tp0r",
+            "Tf04", "Tf0A", "Tf0B", "Tf0D", "Tf0E", "Tp0e"
+        ]
+        var temps: [Double] = []
+        for key in appleKeys {
+            if let temp = smcRead(key: key) { temps.append(temp) }
+        }
+        if !temps.isEmpty {
+            return temps.reduce(0, +) / Double(temps.count)
+        }
+
+        // Fallback: GPU and other sensors
+        let fallbackKeys = ["TG0D", "TG0P", "TW0P", "Ta0P", "Ts0P", "Th0H", "Th1H", "Tm0P"]
+        for key in fallbackKeys {
+            if let temp = smcRead(key: key) { return temp }
+        }
+
+        // Final fallback: battery temperature
+        return getBatteryTemperature()
+    }
+}
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewDelegate, NSTableViewDataSource, NSWindowDelegate {
     var networkItem: NSStatusItem!
     var cpuItem: NSStatusItem!
     var memoryItem: NSStatusItem!
     var hdItem: NSStatusItem!
+    var tempItem: NSStatusItem!
     var lastUploaded: UInt64 = 0
     var lastDownloaded: UInt64 = 0
     var lastCpuInfo: host_cpu_load_info?
@@ -14,8 +184,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     var cpuMenu: NSMenu!
     var memoryMenu: NSMenu!
     var hdMenu: NSMenu!
+    var tempMenu: NSMenu!
     var cpuMenuActive = false
     var memoryMenuActive = false
+    var smcReader: TemperatureReader?
 
     var networkMenuActive = false
     var networkUpdateTimer: Timer?
@@ -122,6 +294,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(showNetworkMenu(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        // 温度状态项
+        smcReader = TemperatureReader()
+        tempItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        tempMenu = NSMenu()
+        let tempCloseItem = NSMenuItem(title: "关闭", action: #selector(closeTempItem), keyEquivalent: "")
+        tempCloseItem.target = self
+        tempMenu.addItem(tempCloseItem)
+        let tempQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        tempQuitItem.target = self
+        tempMenu.addItem(tempQuitItem)
+
+        if let button = tempItem.button {
+            button.title = "T--"
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.target = self
+            button.action = #selector(showTempMenu(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
@@ -830,6 +1021,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         checkAllClosed()
     }
 
+    @objc func closeTempItem() {
+        NSStatusBar.system.removeStatusItem(tempItem)
+        tempItem = nil
+        checkAllClosed()
+    }
+
+    @objc func showTempMenu(_ sender: AnyObject?) {
+        guard let tempItem = tempItem else { return }
+        tempMenu.removeAllItems()
+
+        let tempStr: String
+        if let temp = smcReader?.getTemperature() {
+            tempStr = "温度: \(String(format: "%.1f", temp))°C"
+        } else {
+            tempStr = "温度: 不可用"
+        }
+
+        let tempInfoItem = NSMenuItem(title: tempStr, action: nil, keyEquivalent: "")
+        tempInfoItem.isEnabled = false
+        tempMenu.addItem(tempInfoItem)
+
+        tempMenu.addItem(NSMenuItem.separator())
+
+        let tempCloseItem = NSMenuItem(title: "关闭", action: #selector(closeTempItem), keyEquivalent: "")
+        tempCloseItem.target = self
+        tempMenu.addItem(tempCloseItem)
+
+        let tempQuitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        tempQuitItem.target = self
+        tempMenu.addItem(tempQuitItem)
+
+        tempItem.menu = tempMenu
+        tempItem.button?.performClick(nil)
+    }
+
     @objc func showHdMenu(_ sender: AnyObject?) {
         guard let hdItem = hdItem else { return }
         hdMenu.removeAllItems()
@@ -894,7 +1120,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
     }
 
     func checkAllClosed() {
-        if networkItem == nil && cpuItem == nil && memoryItem == nil && hdItem == nil {
+        if networkItem == nil && cpuItem == nil && memoryItem == nil && hdItem == nil && tempItem == nil {
             NSApplication.shared.terminate(nil)
         }
     }
@@ -931,6 +1157,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         let freeSpace = getFreeDiskSpace()
         if let button = hdItem?.button {
             button.title = "H" + freeSpace
+        }
+
+        if let button = tempItem?.button {
+            if let temp = smcReader?.getTemperature() {
+                button.title = "T" + String(Int(temp)) + "°C"
+            } else {
+                button.title = "T--"
+            }
         }
     }
 
