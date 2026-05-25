@@ -3,172 +3,82 @@ import AppKit
 import Darwin
 import IOKit
 
-// MARK: - SMC Types
+// MARK: - Temperature Reader (uses powermetrics via Authorization Services)
 
-private let kSMCUserClientOpen: UInt32 = 0
-private let kSMCHandleYPC: UInt32 = 2
-private let kSMCCallYPC: UInt32 = 5
-
-// Match C struct layout from AppleSMC kext:
-// offset  0: key (UInt32)
-// offset  4: vers (UInt32)
-// offset  8: keyInfo.dataSize (UInt32)
-// offset 12: keyInfo.dataType (UInt32)
-// offset 16: keyInfo.dataAttributes (UInt8)
-// offset 17: padding (UInt8)
-// offset 18: align pad (UInt16)
-// offset 20: result (UInt32)
-// offset 24: status (UInt8)
-// offset 25: command (UInt8)
-// offset 26: state (2 x UInt8)
-// offset 28: data32 (UInt32)
-// offset 32: bytes (32 x UInt8)
-private struct SMCKeyData_t {
-    var key: UInt32 = 0
-    var vers: UInt32 = 0
-    var keyInfo_dataSize: UInt32 = 0
-    var keyInfo_dataType: UInt32 = 0
-    var keyInfo_dataAttributes: UInt8 = 0
-    var padding: UInt8 = 0
-    var _align: UInt16 = 0
-    var result: UInt32 = 0
-    var status: UInt8 = 0
-    var command: UInt8 = 0
-    var state: (UInt8, UInt8) = (0, 0)
-    var data32: UInt32 = 0
-    var bytes: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
-}
-
-private func fourCC(_ string: String) -> UInt32 {
-    let chars = Array(string.utf8)
-    var result: UInt32 = 0
-    for i in 0..<4 {
-        result = result << 8
-        if i < chars.count {
-            result |= UInt32(chars[i])
-        }
-    }
-    return result
-}
-
-
-// MARK: - Temperature Reader
+@_silgen_name("auth_run_command")
+func authRunCommand(_ command: UnsafePointer<CChar>, _ outputPath: UnsafePointer<CChar>) -> Int32
 
 class TemperatureReader {
-    private var smcConn: io_connect_t = 0
-    private var smcAvailable = false
+    private var cachedTemp: Double?
+    private var cachedFan: Int?
+    private var lastUpdateTime: Date = .distantPast
+    private let updateInterval: TimeInterval = 5.0  // update every 5 seconds
 
-    init() {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
-        if service != 0 {
-            let kr = IOServiceOpen(service, mach_task_self_, kSMCUserClientOpen, &smcConn)
-            IOObjectRelease(service)
-            smcAvailable = (kr == KERN_SUCCESS)
-        }
-    }
-
-    deinit {
-        if smcAvailable { IOServiceClose(smcConn) }
-    }
-
-    // Battery temperature fallback (IORegistry, works without entitlements)
+    // Battery temperature fallback (IORegistry, works without root)
     private func getBatteryTemperature() -> Double? {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else { return nil }
         defer { IOObjectRelease(service) }
-
-        guard let tempProp = IORegistryEntryCreateCFProperty(service, "Temperature" as CFString, kCFAllocatorDefault, 0) else {
-            return nil
-        }
-        let tempValue = tempProp.takeRetainedValue()
-        if let temp = tempValue as? Int {
+        if let tempProp = IORegistryEntryCreateCFProperty(service, "Temperature" as CFString, kCFAllocatorDefault, 0),
+           let temp = tempProp.takeRetainedValue() as? Int {
             return Double(temp) / 100.0
         }
         return nil
     }
 
-    // SMC temperature (may not work on newer macOS without entitlements)
-    private func smcRead(key: String) -> Double? {
-        guard smcAvailable else { return nil }
-        let keyCode = fourCC(key)
-        let bufSize = 80
-
-        // Step 1: Get key info (command=9 at offset 25)
-        var inBuf = [UInt8](repeating: 0, count: bufSize)
-        var outBuf = [UInt8](repeating: 0, count: bufSize)
-        inBuf[0] = UInt8((keyCode >> 24) & 0xFF)
-        inBuf[1] = UInt8((keyCode >> 16) & 0xFF)
-        inBuf[2] = UInt8((keyCode >> 8) & 0xFF)
-        inBuf[3] = UInt8(keyCode & 0xFF)
-        inBuf[25] = 9
-
-        var outSize = bufSize
-        let kr1 = inBuf.withUnsafeMutableBufferPointer { ib in
-            outBuf.withUnsafeMutableBufferPointer { ob in
-                IOConnectCallStructMethod(smcConn, 2, ib.baseAddress, bufSize, ob.baseAddress, &outSize)
+    private func runPowermetrics() -> (temp: Double?, fan: Int?) {
+        let outputPath = "/tmp/macstate_pm_\(ProcessInfo.processInfo.processIdentifier).txt"
+        let cmd = "powermetrics --samplers smc -i 1 -n 1"
+        let rc = cmd.withCString { cmdPtr in
+            outputPath.withCString { outPtr in
+                authRunCommand(cmdPtr, outPtr)
             }
         }
-        guard kr1 == 0 else { return nil }
+        guard rc == 0 else { return (nil, nil) }
 
-        let dataSize = (UInt32(outBuf[8]) << 24) | (UInt32(outBuf[9]) << 16) | (UInt32(outBuf[10]) << 8) | UInt32(outBuf[11])
-        let dataType = (UInt32(outBuf[12]) << 24) | (UInt32(outBuf[13]) << 16) | (UInt32(outBuf[14]) << 8) | UInt32(outBuf[15])
+        let output = (try? String(contentsOfFile: outputPath)) ?? ""
+        try? FileManager.default.removeItem(atPath: outputPath)
 
-        // Step 2: Read bytes (command=5)
-        inBuf = [UInt8](repeating: 0, count: bufSize)
-        outBuf = [UInt8](repeating: 0, count: bufSize)
-        inBuf[0] = UInt8((keyCode >> 24) & 0xFF)
-        inBuf[1] = UInt8((keyCode >> 16) & 0xFF)
-        inBuf[2] = UInt8((keyCode >> 8) & 0xFF)
-        inBuf[3] = UInt8(keyCode & 0xFF)
-        inBuf[25] = 5
+        var temp: Double?
+        var fan: Int?
 
-        outSize = bufSize
-        let kr2 = inBuf.withUnsafeMutableBufferPointer { ib in
-            outBuf.withUnsafeMutableBufferPointer { ob in
-                IOConnectCallStructMethod(smcConn, 2, ib.baseAddress, bufSize, ob.baseAddress, &outSize)
-            }
+        // Parse "CPU die temperature: 79.09 C"
+        if let range = output.range(of: "CPU die temperature:\\s*([\\d.]+)", options: .regularExpression) {
+            let str = String(output[range]).replacingOccurrences(of: "CPU die temperature:", with: "")
+                .trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: " C", with: "")
+            temp = Double(str)
         }
-        guard kr2 == 0 else { return nil }
 
-        if dataType == fourCC("SP78") && dataSize == 2 {
-            let temp = Double(outBuf[32]) + Double(outBuf[33]) / 256.0
-            if temp > 0 && temp < 130 { return temp }
+        // Parse "Fan: 7208 rpm"
+        if let range = output.range(of: "Fan:\\s*(\\d+)\\s*rpm", options: .regularExpression) {
+            let str = String(output[range]).replacingOccurrences(of: "Fan:", with: "")
+                .trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: " rpm", with: "")
+            fan = Int(str)
         }
-        return nil
+
+        return (temp, fan)
+    }
+
+    private func updateIfNeeded() {
+        let now = Date()
+        guard now.timeIntervalSince(lastUpdateTime) >= updateInterval else { return }
+        lastUpdateTime = now
+
+        let result = runPowermetrics()
+        if let t = result.temp { cachedTemp = t }
+        if let f = result.fan { cachedFan = f }
     }
 
     func getTemperature() -> Double? {
-        // Try SMC CPU keys first
-        let cpuKeys = ["TC0D", "TC0P", "TC0E", "TC0F", "TC0C"]
-        for key in cpuKeys {
-            if let temp = smcRead(key: key) { return temp }
-        }
+        updateIfNeeded()
+        return cachedTemp ?? getBatteryTemperature()
+    }
 
-        // Apple Silicon keys
-        let appleKeys = [
-            "Tp01", "Tp05", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0X", "Tp0b",
-            "Tp09", "Tp0T", "Tp0f", "Tp0j", "Tp0n", "Tp0r",
-            "Tf04", "Tf0A", "Tf0B", "Tf0D", "Tf0E", "Tp0e"
-        ]
-        var temps: [Double] = []
-        for key in appleKeys {
-            if let temp = smcRead(key: key) { temps.append(temp) }
-        }
-        if !temps.isEmpty {
-            return temps.reduce(0, +) / Double(temps.count)
-        }
-
-        // Fallback: GPU and other sensors
-        let fallbackKeys = ["TG0D", "TG0P", "TW0P", "Ta0P", "Ts0P", "Th0H", "Th1H", "Tm0P"]
-        for key in fallbackKeys {
-            if let temp = smcRead(key: key) { return temp }
-        }
-
-        // Final fallback: battery temperature
-        return getBatteryTemperature()
+    func getFanSpeed() -> Int? {
+        updateIfNeeded()
+        return cachedFan
     }
 }
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewDelegate, NSTableViewDataSource, NSWindowDelegate {
@@ -1031,16 +941,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
         guard let tempItem = tempItem else { return }
         tempMenu.removeAllItems()
 
-        let tempStr: String
         if let temp = smcReader?.getTemperature() {
-            tempStr = "温度: \(String(format: "%.1f", temp))°C"
+            let tempInfoItem = NSMenuItem(title: "温度: \(String(format: "%.1f", temp))°C", action: nil, keyEquivalent: "")
+            tempInfoItem.isEnabled = false
+            tempMenu.addItem(tempInfoItem)
         } else {
-            tempStr = "温度: 不可用"
+            let tempInfoItem = NSMenuItem(title: "温度: 不可用", action: nil, keyEquivalent: "")
+            tempInfoItem.isEnabled = false
+            tempMenu.addItem(tempInfoItem)
         }
 
-        let tempInfoItem = NSMenuItem(title: tempStr, action: nil, keyEquivalent: "")
-        tempInfoItem.isEnabled = false
-        tempMenu.addItem(tempInfoItem)
+        if let fan = smcReader?.getFanSpeed() {
+            let fanItem = NSMenuItem(title: "风扇: \(fan) RPM", action: nil, keyEquivalent: "")
+            fanItem.isEnabled = false
+            tempMenu.addItem(fanItem)
+        }
 
         tempMenu.addItem(NSMenuItem.separator())
 
@@ -1161,7 +1076,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSTableViewD
 
         if let button = tempItem?.button {
             if let temp = smcReader?.getTemperature() {
-                button.title = "T" + String(Int(temp)) + "°C"
+                var title = "T" + String(Int(temp)) + "°C"
+                if let fan = smcReader?.getFanSpeed() {
+                    title += " F" + String(fan)
+                }
+                button.title = title
             } else {
                 button.title = "T--"
             }
