@@ -3,16 +3,13 @@ import AppKit
 import Darwin
 import IOKit
 
-// MARK: - Temperature Reader (uses powermetrics via Authorization Services)
-
-@_silgen_name("auth_run_command")
-func authRunCommand(_ command: UnsafePointer<CChar>, _ outputPath: UnsafePointer<CChar>) -> Int32
+// MARK: - Temperature Reader (uses pm_helper + powermetrics)
 
 class TemperatureReader {
     private var cachedTemp: Double?
     private var cachedFan: Int?
     private var lastUpdateTime: Date = .distantPast
-    private let updateInterval: TimeInterval = 5.0  // update every 5 seconds
+    private let updateInterval: TimeInterval = 5.0
 
     // Battery temperature fallback (IORegistry, works without root)
     private func getBatteryTemperature() -> Double? {
@@ -27,17 +24,29 @@ class TemperatureReader {
     }
 
     private func runPowermetrics() -> (temp: Double?, fan: Int?) {
-        let outputPath = "/tmp/macstate_pm_\(ProcessInfo.processInfo.processIdentifier).txt"
-        let cmd = "powermetrics --samplers smc -i 1 -n 1"
-        let rc = cmd.withCString { cmdPtr in
-            outputPath.withCString { outPtr in
-                authRunCommand(cmdPtr, outPtr)
-            }
-        }
-        guard rc == 0 else { return (nil, nil) }
+        NSLog("[MacState] runPowermetrics: launching via osascript...")
 
-        let output = (try? String(contentsOfFile: outputPath)) ?? ""
-        try? FileManager.default.removeItem(atPath: outputPath)
+        let pipe = Pipe()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", "do shell script \"powermetrics --samplers smc -i 1 -n 1\" with administrator privileges"]
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            NSLog("[MacState] osascript launch failed: \(error)")
+            return (nil, nil)
+        }
+
+        let rc = task.terminationStatus
+        NSLog("[MacState] osascript exited with code: \(rc)")
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        NSLog("[MacState] powermetrics output (\(output.count) chars): \(output.prefix(500))")
 
         var temp: Double?
         var fan: Int?
@@ -48,6 +57,9 @@ class TemperatureReader {
                 .trimmingCharacters(in: .whitespaces)
                 .replacingOccurrences(of: " C", with: "")
             temp = Double(str)
+            NSLog("[MacState] parsed temp: \(temp ?? -1)")
+        } else {
+            NSLog("[MacState] FAILED to parse CPU die temperature")
         }
 
         // Parse "Fan: 7208 rpm"
@@ -56,6 +68,9 @@ class TemperatureReader {
                 .trimmingCharacters(in: .whitespaces)
                 .replacingOccurrences(of: " rpm", with: "")
             fan = Int(str)
+            NSLog("[MacState] parsed fan: \(fan ?? -1)")
+        } else {
+            NSLog("[MacState] FAILED to parse Fan")
         }
 
         return (temp, fan)
