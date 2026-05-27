@@ -9,7 +9,7 @@ class TemperatureReader {
     private var cachedTemp: Double?
     private var cachedFan: Int?
     private var lastUpdateTime: Date = .distantPast
-    private let updateInterval: TimeInterval = 5.0
+    private let updateInterval: TimeInterval = 300.0  // TODO: 减少密码弹窗频率，5分钟更新一次，后续优化为首次授权后缓存
 
     // Battery temperature fallback (IORegistry, works without root)
     private func getBatteryTemperature() -> Double? {
